@@ -105,3 +105,7 @@ void prune_su_access();
 extern std::atomic_flag skip_pkg_rescan;
 void initialize_denylist();
 int denylist_cli(int argc, char **argv);
+
+// Props
+void hide_sensitive_props();
+void reset_sensitive_props();

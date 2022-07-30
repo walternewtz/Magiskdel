@@ -237,4 +237,24 @@
     <string name="reboot_apply_change">পরিবর্তনগুলি প্রয়োগ করতে রিবুট করুন</string>
     <string name="restore_app_confirmation">এটি লুকানো অ্যাপটিকে মূল অ্যাপে ফিরিয়ে আনবে। আপনি কি সত্যিই এটি করতে চান?</string>
 
+
+    <!--Delta-->
+    <string name="direct_install_system">সিস্টেম পার্টিশনে সরাসরি ইনস্টল করুন</string>
+    <string name="reboot_core_only">শুধুমাত্র মূল মোডে রিবুট করুন</string>
+    <string name="settings_hidelist_config_title">ম্যাজিস্ক লুকান কনফিগার করুন</string>
+    <string name="settings_hidelist_config_summary">হাইডলিস্টে অন্তর্ভুক্ত করার জন্য প্রক্রিয়াগুলি নির্বাচন করুন৷t</string>
+    <string name="settings_magiskhide_title">ম্যাজিস্ক লুকান</string>
+    <string name="settings_magiskhide_summary">বিভিন্ন ধরনের সনাক্তকরণ থেকে ম্যাজিস্ক লুকান</string>
+    <string name="settings_unload_magisk_title">ম্যাজিস্ক অক্ষম করুন</string>
+    <string name="settings_unload_magisk_summary">সাময়িকভাবে ম্যাজিস্ক ডেমন বন্ধ করুন এবং সমস্ত ম্যাজিস্ক পরিবর্তন প্রত্যাবর্তন করুন</string>
+    <string name="settings_unload_magisk_toast">ম্যাজিস্ক সাময়িকভাবে নিষ্ক্রিয় করা হয়েছে.  ম্যাজিস্ক পুনরুদ্ধার করতে পুনরায় আরম্ভ করুন</string>
+    <string name="settings_riru_title">রিরু কোর</string>
+    <string name="settings_riru_summary">রিরু কোড মডিউল যোগ করুন</string>
+    <string name="settings_riru_toast">রিরু কোর মডিউল যোগ করা হয়েছে</string>
+    <string name="settings_magiskhide_whitelist_title">ম্যাজিস্ক হোয়াইটলিস্ট লুকান</string>
+    <string name="settings_magiskhide_whitelist_summary">ম্যাজিস্ক থেকে পূর্বে রুট সুবিধা দেওয়া হয়েছে এমন অ্যাপ ব্যতীত সমস্ত অ্যাপ থেকে ম্যাজিস্ক লুকান</string>
+    <string name="settings_magiskhide_dualspace_title">ম্যাজিস্ক লুকান ডুয়াল স্পেস</string>
+    <string name="settings_magiskhide_dualspace_summary">ডুয়াল স্পেসে সমস্ত অ্যাপ থেকে ম্যাজিস্ক লুকান।</string>
+
+
 </resources>

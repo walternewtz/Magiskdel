@@ -236,5 +236,26 @@
     <string name="app_not_found">Tidak ditemukan aplikasi untuk menangani tindakan ini</string>
     <string name="reboot_apply_change">Mulai ulang untuk menerapkan perubahan</string>
     <string name="restore_app_confirmation">Ini akan mengembalikan aplikasi tersembunyi kembali ke aplikasi asli. Apakah Anda benar-benar ingin melakukan ini?</string>
+    <string name="settings_anti_bootloop_title">Proteksi dari Bootloop</string>
+    <string name="settings_anti_bootloop_summary">Otomatis mulai ulang ke mode hanya Inti jika proses zygote gagal memulai dalam beberapa kali</string>
+   
+
+    <!--Delta-->
+    <string name="direct_install_system">Langsung pasang pada partisi sistem</string>
+    <string name="reboot_core_only">Mulai ulang ke mode hanya Inti</string>
+    <string name="settings_magiskhide_title">MagiskHide</string> 
+    <string name="settings_magiskhide_summary">Sembunyikan Magisk dari segala bentuk pendeteksian</string>
+    <string name="settings_unload_magisk_title">Nonaktifkan Magisk</string>
+    <string name="settings_unload_magisk_summary">Menghentikan Magisk daemon secara sementara dan mengembalikan semua bentuk modifikasi dari Magisk</string>
+    <string name="settings_unload_magisk_toast">Magisk telah dinonaktifkan secara sementara. Mulai ulang untuk mengembalikan Magisk</string>
+    <string name="settings_riru_title">Inti Riru</string>
+    <string name="settings_riru_summary">Menambahkan modul inti Riru</string>
+    <string name="settings_riru_toast">Modul inti Riru telah ditambahkan</string>
+    <string name="settings_hidelist_config_title">Konfigurasi MagiskHide</string>
+    <string name="settings_hidelist_config_summary">Pilih proses yang akan disertakan pada MagiskHide</string>
+    <string name="settings_magiskhide_dualspace_title">MagiskHide di Ruang Kedua</string>
+    <string name="settings_magiskhide_dualspace_summary">Menjalankan MagiskHide pada semua proses di Ruang Kedua</string>
+    <string name="settings_magiskhide_whitelist_title">MagiskHide di Daftar Putih</string>
+    <string name="settings_magiskhide_whitelist_summary">Sembunyikan Magisk pada semua aplikasi kecuali aplikasi yang sebelumnya sudah diberikan akses root oleh Magisk</string>
 
 </resources>
