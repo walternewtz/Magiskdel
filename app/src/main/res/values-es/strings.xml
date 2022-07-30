@@ -237,4 +237,26 @@
     <string name="reboot_apply_change">Reiniciar para aplicar cambios</string>
     <string name="restore_app_confirmation">Esto restaurará la aplicación oculta a la aplicación original. ¿Realmente quieres hacer esto?</string>
 
+    <!--Delta-->
+    <string name="direct_install_system">Instalación directa en la partición del sistema</string>
+    <string name="reboot_core_only">Reiniciar en modo de solo núcleo</string>
+    <string name="settings_hidelist_config_title">Configurar MagiskHide</string>
+    <string name="settings_hidelist_config_summary">Seleccione los procesos que se incluirán en la lista oculta</string>
+    <string name="settings_magiskhide_title">MagiskOcultar</string>
+    <string name="settings_magiskhide_summary">Ocultar Magisk de varias formas de detección</string>
+    <string name="settings_unload_magisk_title">Deshabilitar Magisk</string>
+    <string name="settings_unload_magisk_summary">Detenga temporalmente el demonio Magisk y revierta todas las modificaciones de Magisk</string>
+    <string name="settings_unload_magisk_toast">Magisk ha sido deshabilitado temporalmente. Reiniciar para restaurar Magisk</string>
+    <string name="settings_riru_title">Núcleo Riru</string>
+    <string name="settings_riru_summary">Agregar módulo de código Riru</string>
+    <string name="settings_riru_toast">Se agregó el módulo principal de Riru</string>
+    <string name="settings_magiskhide_whitelist_title">MagiskOcultar lista blanca</string>
+    <string name="settings_magiskhide_whitelist_summary">Solo las aplicaciones a las que se les ha otorgado previamente privilegios de root pueden acceder a Magisk. Habilitar esta opción puede hacer que el sistema se vuelva inestable e incluso peor. Habilite esta opción solo si es necesario.</string>
+    <string name="settings_magiskhide_dualspace_title">MagiskHide DualSpace</string>
+    <string name="settings_magiskhide_dualspace_summary">Ocultar Magisk de todas las aplicaciones en doble espacio</string>
+    <string name="settings_anti_bootloop_title">Protección de bucle de arranque</string>
+    <string name="settings_anti_bootloop_summary">Reinicie en modo de solo núcleo si el proceso de cigoto no se inició muchas veces</string>
+    <string name="settings_coreonly_title">Modo de solo núcleo</string>
+    <string name="settings_coreonly_summary">Solo las funciones principales, como MagiskSU (acceso raíz) y MagiskHide, están disponibles y no se cargarán módulos en el modo de solo núcleo. Es necesario reiniciar para que surta efecto.</string>
+
 </resources>

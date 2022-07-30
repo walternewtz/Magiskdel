@@ -1,6 +1,5 @@
 #pragma once
 
-#include <pthread.h>
 #include <string_view>
 #include <functional>
 #include <map>
@@ -10,6 +9,8 @@
 
 #define ISOLATED_MAGIC "isolated"
 
+#define SIGTERMTHRD SIGUSR1
+
 namespace DenyRequest {
 enum : int {
     ENFORCE,
@@ -18,6 +19,11 @@ enum : int {
     REMOVE,
     LIST,
     STATUS,
+    DUALSPACE_ENABLE,
+    DUALSPACE_DISABLE,
+    DUALSPACE_STATUS,
+    WHITELIST,
+    BLACKLIST,
 
     END
 };
@@ -33,21 +39,34 @@ enum : int {
     INVALID_PKG,
     NO_NS,
     ERROR,
+    DUALSPACE_ENABLED,
+    DUALSPACE_DISABLED,
+    WHITELIST_ENFORCED,
 
     END
 };
 }
 
 // CLI entries
-int enable_deny();
+int enable_deny(bool props = true);
+int enable_hide_dualspace();
+int enable_whitelist();
 int disable_deny();
+int disable_hide_dualspace();
+int disable_whitelist();
 int add_list(int client);
 int rm_list(int client);
 void ls_list(int client);
 
 // Utility functions
-bool is_deny_target(int uid, std::string_view process);
-void revert_unmount();
+bool is_deny_target(int uid, std::string_view process, int max_len = 1024);
+void crawl_procfs(const std::function<bool(int)> &fn);
+
+// Revert
+void revert_unmount(int pid = -1);
+void cleanup_preload();
 
 extern int sys_ui_app_id;
 extern std::atomic<bool> denylist_enforced;
+extern std::atomic<bool> hide_dualspace;
+extern std::atomic<bool> hide_whitelist;

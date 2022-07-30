@@ -7,6 +7,7 @@
 #
 ########################################################
 
+# unused function
 trampoline() {
   mount /data 2>/dev/null
   if [ -f $MAGISKBIN/addon.d.sh ]; then
@@ -42,9 +43,7 @@ trampoline() {
   exit 1
 }
 
-# Always use the script in /data
 MAGISKBIN=/data/adb/magisk
-[ "$0" = $MAGISKBIN/addon.d.sh ] || trampoline "$@"
 
 V1_FUNCS=/tmp/backuptool.functions
 V2_FUNCS=/postinstall/tmp/backuptool.functions
@@ -89,8 +88,29 @@ main() {
   fi
   print_title "Magisk $PRETTY_VER addon.d"
 
+  is_mounted /data || mount /data 2>/dev/null
+
+  local DATA=false
+  local DATA_DE=false
+  if grep ' /data ' /proc/mounts | grep -vq 'tmpfs'; then
+    # Test if data is writable
+    touch /data/.rw && rm /data/.rw && DATA=true
+    # Test if data is decrypted
+    $DATA && [ -d /data/adb ] && touch /data/adb/.rw && rm /data/adb/.rw && DATA_DE=true
+    $DATA_DE && [ -d /data/adb/magisk ] || mkdir /data/adb/magisk || DATA_DE=false
+  fi
+  if ! $DATA_DE && [ -d "/data/unencrypted/MAGISKBIN" ]; then
+    MAGISKBIN=/data/unencrypted/MAGISKBIN
+  elif [ ! -d "$MAGISKBIN" ]; then
+    ui_print "***********************"
+    ui_print " Magisk addon.d failed"
+    ui_print "***********************"
+    ui_print "! Cannot find Magisk binaries - was data wiped or not decrypted?"
+    ui_print "! Reflash OTA from decrypted recovery or reflash Magisk"
+    exit 1
+  fi
+
   mount_partitions
-  check_data
   get_flags
 
   if $backuptool_ab; then

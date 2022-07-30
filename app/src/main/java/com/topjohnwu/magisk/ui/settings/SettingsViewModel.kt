@@ -65,7 +65,7 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
                 SystemlessHosts
             ))
             if (Const.Version.atLeast_24_0()) {
-                list.addAll(listOf(Zygisk, DenyList, DenyListConfig))
+                list.addAll(listOf(AntiBLoop, CoreOnly, Zygisk, MagiskHideClass, DenyList, WhiteList, HideDualSpace, DenyListConfig))
             }
         }
 
@@ -88,6 +88,10 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
                 // Can hide overlay windows on 12.0+
                 list.remove(Tapjack)
             }
+            if (Const.Version.atLeast_24_0()) {
+                // Can disable Magisk
+                list.add(unloadMagisk)
+            } 
         }
 
         return list
@@ -101,6 +105,8 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
             Theme -> SettingsFragmentDirections.actionSettingsFragmentToThemeFragment().navigate()
             DenyListConfig -> SettingsFragmentDirections.actionSettingsFragmentToDenyFragment().navigate()
             SystemlessHosts -> createHosts()
+            unloadMagisk -> stopMagisk()
+            RiruCore -> createRiru()
             Hide, Restore -> withInstallPermission(andThen)
             AddShortcut -> AddHomeIconEvent().publish()
             else -> andThen()
@@ -134,6 +140,18 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
     private fun createHosts() {
         Shell.cmd("add_hosts_module").submit {
             Utils.toast(R.string.settings_hosts_toast, Toast.LENGTH_SHORT)
+        }
+    }
+
+    private fun createRiru() {
+        Shell.cmd("add_riru_core_module").submit {
+            Utils.toast(R.string.settings_riru_toast, Toast.LENGTH_SHORT)
+        }
+    }
+
+    private fun stopMagisk() {
+        Shell.cmd("unload_magisk").submit {
+            Utils.toast(R.string.settings_unload_magisk_toast, Toast.LENGTH_SHORT)
         }
     }
 }

@@ -5,7 +5,7 @@
 // magiskinit will hex patch this constant,
 // appending \0 to prevent the compiler from reusing the string for "1"
 #define MAIN_SOCKET  "d30138f2310a9fb9c54a3e0c21f58591\0"
-#define JAVA_PACKAGE_NAME "com.topjohnwu.magisk"
+#define JAVA_PACKAGE_NAME "io.github.huskydg.magisk"
 #define LOGFILE         "/cache/magisk.log"
 #define UNBLOCKFILE     "/dev/.magisk_unblock"
 #define SECURE_DIR      "/data/adb"
@@ -13,6 +13,14 @@
 #define MODULEUPGRADE   SECURE_DIR "/modules_update"
 #define DATABIN         SECURE_DIR "/magisk"
 #define MAGISKDB        SECURE_DIR "/magisk.db"
+
+// unencrypted paths for FBE
+#define FBE_DIR      			"/data/unencrypted"
+#define FBE_DIR_LINK      		"../unencrypted"
+#define FBE_MODULEROOT      	FBE_DIR "/magisk_modules"
+#define FBE_MODULEROOT_LINK     FBE_DIR_LINK "/magisk_modules"
+#define FBE_DATABIN         	FBE_DIR "/MAGISKBIN"
+#define FBE_DATABIN_LINK        FBE_DIR_LINK "/MAGISKBIN"
 
 // tmpfs paths
 extern std::string  MAGISKTMP;
@@ -28,7 +36,7 @@ extern std::string  MAGISKTMP;
 #define ZYGISKBIN   INTLROOT "/zygisk"
 #define SELINUXMOCK INTLROOT "/selinux"
 
-constexpr const char *applet_names[] = { "su", "resetprop", nullptr };
+constexpr const char *applet_names[] = { "su", "resetprop", "magiskhide", nullptr };
 
 #define POST_FS_DATA_WAIT_TIME       40
 #define POST_FS_DATA_SCRIPT_MAX_TIME 35
@@ -38,6 +46,7 @@ extern int SDK_INT;
 
 // Multi-call entrypoints
 int magisk_main(int argc, char *argv[]);
+int denylist_cli(int argc, char *argv[]);
 int su_client_main(int argc, char *argv[]);
 int resetprop_main(int argc, char *argv[]);
 int app_process_main(int argc, char *argv[]);

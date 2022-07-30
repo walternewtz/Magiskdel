@@ -24,6 +24,11 @@ mount_sbin() {
   chcon u:object_r:rootfs:s0 /sbin
 }
 
+mkblknode(){
+    local blk_mm="$(mountpoint -d "$2" | sed "s/:/ /g")"
+    mknod "$1" -m 666 b $blk_mm
+}
+
 if [ ! -f /system/build.prop ]; then
   # Running on PC
   echo 'Please run `./build.py emulator` instead of directly executing the script!'
@@ -94,22 +99,25 @@ if mount | grep -q rootfs; then
 elif [ -e /sbin ]; then
   # Legacy SAR
   mount_sbin
-  mkdir -p /dev/sysroot
-  block=$(mount | grep ' / ' | awk '{ print $1 }')
-  [ $block = "/dev/root" ] && block=/dev/block/dm-0
-  mount -o ro $block /dev/sysroot
-  for file in /dev/sysroot/sbin/*; do
+  mkdir -p /sbin/.magisk/block /sbin/.magisk/mirror/system_root
+  block=/sbin/.magisk/block/system_root
+  mirror=/sbin/.magisk/mirror/system_root
+  mkblknode $block /
+  mount -o ro $block $mirror
+  for file in $mirror/sbin/*; do
     [ ! -e $file ] && break
+    sfile=/sbin/$(basename $file)
     if [ -L $file ]; then
       cp -af $file /sbin
+    elif [ -d $file ]; then
+      mkdir $sfile
+      mount -o bind $file $sfile
     else
-      sfile=/sbin/$(basename $file)
       touch $sfile
       mount -o bind $file $sfile
     fi
   done
-  umount -l /dev/sysroot
-  rm -rf /dev/sysroot
+  umount -l $mirror
 else
   # Android Q+ without sbin
   MAGISKTMP=/dev/avd-magisk

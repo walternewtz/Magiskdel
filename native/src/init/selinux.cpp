@@ -1,4 +1,5 @@
 #include <sys/mount.h>
+#include <stdio.h>
 
 #include <magisk.hpp>
 #include <sepolicy.hpp>
@@ -15,7 +16,10 @@ void MagiskInit::patch_sepolicy(const char *in, const char *out) {
     sepol->magisk_rules();
 
     // Custom rules
-    if (!custom_rules_dir.empty()) {
+    char trigger_file[1024];
+    sprintf(trigger_file, "%s/../.disable_magisk", custom_rules_dir.data());
+
+    if (!custom_rules_dir.empty() && access(trigger_file, F_OK) != 0) {
         if (auto dir = xopen_dir(custom_rules_dir.data())) {
             for (dirent *entry; (entry = xreaddir(dir.get()));) {
                 auto rule = custom_rules_dir + "/" + entry->d_name + "/sepolicy.rule";
@@ -95,8 +99,11 @@ bool MagiskInit::hijack_sepolicy() {
     }
 
     // Read all custom rules into memory
+    char trigger_file[1024];
+    sprintf(trigger_file, "%s/../.disable_magisk", custom_rules_dir.data());
+
     string rules;
-    if (!custom_rules_dir.empty()) {
+    if (!custom_rules_dir.empty() && access(trigger_file, F_OK) != 0) {
         if (auto dir = xopen_dir(custom_rules_dir.data())) {
             for (dirent *entry; (entry = xreaddir(dir.get()));) {
                 auto rule_file = custom_rules_dir + "/" + entry->d_name + "/sepolicy.rule";

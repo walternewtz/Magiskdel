@@ -28,13 +28,12 @@ static bool unhook_functions();
 namespace {
 
 enum {
-    POST_SPECIALIZE,
     APP_FORK_AND_SPECIALIZE,
+    DO_HIDE,
     APP_SPECIALIZE,
     SERVER_FORK_AND_SPECIALIZE,
     DO_REVERT_UNMOUNT,
     CAN_UNLOAD_ZYGISK,
-    SKIP_FD_SANITIZATION,
 
     FLAG_MAX
 };
@@ -42,8 +41,6 @@ enum {
 #define DCL_PRE_POST(name) \
 void name##_pre();         \
 void name##_post();
-
-#define MAX_FD_SIZE 1024
 
 struct HookContext {
     JNIEnv *env;
@@ -59,22 +56,21 @@ struct HookContext {
     int pid;
     bitset<FLAG_MAX> flags;
     uint32_t info_flags;
-    bitset<MAX_FD_SIZE> allowed_fds;
-    vector<int> exempted_fds;
 
     HookContext() : env(nullptr), args{nullptr}, process(nullptr), pid(-1), info_flags(0) {}
+
+    static void pre_specialize_start(DIR *dir, bitset<1024> &allowed_fds);
+    void pre_specialize_end(DIR *dir, bitset<1024> &allowed_fds);
+    bool setup_fd_ignore(bitset<1024> *allowed_fds = nullptr);
 
     void run_modules_pre(const vector<int> &fds);
     void run_modules_post();
     DCL_PRE_POST(fork)
-    DCL_PRE_POST(app_specialize)
     DCL_PRE_POST(nativeForkAndSpecialize)
     DCL_PRE_POST(nativeSpecializeAppProcess)
     DCL_PRE_POST(nativeForkSystemServer)
 
     void unload_zygisk();
-    void sanitize_fds();
-    bool exempt_fd(int fd);
 };
 
 #undef DCL_PRE_POST
@@ -154,6 +150,7 @@ DCL_HOOK_FUNC(int, jniRegisterNativeMethods,
 }
 
 // Skip actual fork and return cached result if applicable
+// Also unload first stage zygisk if necessary
 DCL_HOOK_FUNC(int, fork) {
     return (g_ctx && g_ctx->pid >= 0) ? g_ctx->pid : old_fork();
 }
@@ -161,11 +158,10 @@ DCL_HOOK_FUNC(int, fork) {
 // Unmount stuffs in the process's private mount namespace
 DCL_HOOK_FUNC(int, unshare, int flags) {
     int res = old_unshare(flags);
-    if (g_ctx && (flags & CLONE_NEWNS) != 0 && res == 0 &&
-        // For some unknown reason, unmounting app_process in SysUI can break.
-        // This is reproducible on the official AVD running API 26 and 27.
-        // Simply avoid doing any unmounts for SysUI to avoid potential issues.
-        (g_ctx->info_flags & PROCESS_IS_SYS_UI) == 0) {
+    if (g_ctx && (flags & CLONE_NEWNS) != 0 && res == 0) {
+        if (g_ctx->flags[DO_HIDE]) {
+            cleanup_preload();
+        }
         if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
             revert_unmount();
         } else {
@@ -178,19 +174,12 @@ DCL_HOOK_FUNC(int, unshare, int flags) {
     return res;
 }
 
-// Close logd_fd if necessary to prevent crashing
-// For more info, check comments in zygisk_log_write
+// A place to clean things up before zygote evaluates fd table
 DCL_HOOK_FUNC(void, android_log_close) {
-    if (g_ctx == nullptr) {
-        // Happens during un-managed fork like nativeForkApp, nativeForkUsap
+    if (g_ctx == nullptr || !g_ctx->flags[APP_SPECIALIZE]) {
+        // Close fd to prevent crashing.
+        // For more info, check comments in zygisk_log_write.
         close(logd_fd.exchange(-1));
-    } else if (!g_ctx->flags[SKIP_FD_SANITIZATION]) {
-        close(logd_fd.exchange(-1));
-        if (g_ctx->pid <= 0) {
-            // Switch to plain old android logging because we cannot talk
-            // to magiskd to fetch our log pipe afterwards anyways.
-            android_logging();
-        }
     }
     old_android_log_close();
 }
@@ -322,11 +311,6 @@ bool ZygiskModule::RegisterModuleImpl(api_abi_base *api, long *module) {
 
     // Fill in API accordingly with module API version
     switch (api_version) {
-    case 4: {
-        auto v4 = static_cast<api_abi_v4 *>(api);
-        v4->exemptFd = [](int fd) { return g_ctx != nullptr && g_ctx->exempt_fd(fd); };
-    }
-        // fallthrough
     case 3:
     case 2: {
         auto v2 = static_cast<api_abi_v2 *>(api);
@@ -397,97 +381,79 @@ uint32_t ZygiskModule::getFlags() {
 
 // -----------------------------------------------------------------
 
-int sigmask(int how, int signum) {
-    sigset_t set;
-    sigemptyset(&set);
-    sigaddset(&set, signum);
-    return sigprocmask(how, &set, nullptr);
+bool HookContext::setup_fd_ignore(bitset<1024> *allowed_fds) {
+    if (flags[APP_SPECIALIZE]) {
+        if (args.app->fds_to_ignore == nullptr) {
+            // The field fds_to_ignore don't exist if
+            // - Running before Android 8.0
+            // - Called by nativeSpecializeAppProcess
+            // In either case, FDs are not checked, so we can simply skip
+            return true;
+        }
+        bool success = false;
+        if (jintArray fdsToIgnore = *args.app->fds_to_ignore) {
+            int *arr = env->GetIntArrayElements(fdsToIgnore, nullptr);
+            int len = env->GetArrayLength(fdsToIgnore);
+            if (allowed_fds) {
+                for (int i = 0; i < len; ++i) {
+                    int fd = arr[i];
+                    if (fd >= 0 && fd < 1024) {
+                        (*allowed_fds)[fd] = true;
+                    }
+                }
+            }
+
+            jintArray newFdList = nullptr;
+            if (logd_fd >= 0 && (newFdList = env->NewIntArray(len + 1))) {
+                success = true;
+                env->SetIntArrayRegion(newFdList, 0, len, arr);
+                int fd = logd_fd;
+                env->SetIntArrayRegion(newFdList, len, 1, &fd);
+                *args.app->fds_to_ignore = newFdList;
+            }
+            env->ReleaseIntArrayElements(fdsToIgnore, arr, JNI_ABORT);
+        } else {
+            jintArray newFdList = nullptr;
+            if (logd_fd >= 0 && (newFdList = env->NewIntArray(1))) {
+                success = true;
+                int fd = logd_fd;
+                env->SetIntArrayRegion(newFdList, 0, 1, &fd);
+                *args.app->fds_to_ignore = newFdList;
+            }
+        }
+        return success;
+    }
+    return false;
 }
 
-void HookContext::fork_pre() {
-    g_ctx = this;
-    // Do our own fork before loading any 3rd party code
-    // First block SIGCHLD, unblock after original fork is done
-    sigmask(SIG_BLOCK, SIGCHLD);
-    pid = old_fork();
-    if (pid != 0 || flags[SKIP_FD_SANITIZATION])
-        return;
-
+void HookContext::pre_specialize_start(DIR *dir, bitset<1024> &allowed_fds) {
     // Record all open fds
-    auto dir = xopen_dir("/proc/self/fd");
-    for (dirent *entry; (entry = xreaddir(dir.get()));) {
+    for (dirent *entry; (entry = xreaddir(dir));) {
         int fd = parse_int(entry->d_name);
-        if (fd < 0 || fd >= MAX_FD_SIZE) {
+        if (fd < 0 || fd >= 1024) {
             close(fd);
             continue;
         }
         allowed_fds[fd] = true;
     }
-    // The dirfd should not be allowed
-    allowed_fds[dirfd(dir.get())] = false;
 }
 
-void HookContext::sanitize_fds() {
-    if (flags[SKIP_FD_SANITIZATION])
-        return;
-
-    if (flags[APP_FORK_AND_SPECIALIZE]) {
-        auto update_fd_array = [&](int off) -> jintArray {
-            if (exempted_fds.empty())
-                return nullptr;
-
-            jintArray array = env->NewIntArray(off + exempted_fds.size());
-            if (array == nullptr)
-                return nullptr;
-
-            env->SetIntArrayRegion(array, off, exempted_fds.size(), exempted_fds.data());
-            for (int fd : exempted_fds) {
-                if (fd >= 0 && fd < MAX_FD_SIZE) {
-                    allowed_fds[fd] = true;
-                }
-            }
-            *args.app->fds_to_ignore = array;
-            flags[SKIP_FD_SANITIZATION] = true;
-            return array;
-        };
-
-        if (jintArray fdsToIgnore = *args.app->fds_to_ignore) {
-            int *arr = env->GetIntArrayElements(fdsToIgnore, nullptr);
-            int len = env->GetArrayLength(fdsToIgnore);
-            for (int i = 0; i < len; ++i) {
-                int fd = arr[i];
-                if (fd >= 0 && fd < MAX_FD_SIZE) {
-                    allowed_fds[fd] = true;
-                }
-            }
-            if (jintArray newFdList = update_fd_array(len)) {
-                env->SetIntArrayRegion(newFdList, 0, len, arr);
-            }
-            env->ReleaseIntArrayElements(fdsToIgnore, arr, JNI_ABORT);
-        } else {
-            update_fd_array(0);
-        }
-    }
-
-    if (pid != 0)
-        return;
+void HookContext::pre_specialize_end(DIR *dir, bitset<1024> &allowed_fds) {
+    bool disable_zygisk_logging = !setup_fd_ignore(&allowed_fds);
 
     // Close all forbidden fds to prevent crashing
-    auto dir = xopen_dir("/proc/self/fd");
-    int dfd = dirfd(dir.get());
-    for (dirent *entry; (entry = xreaddir(dir.get()));) {
+    rewinddir(dir);
+    for (dirent *entry; (entry = xreaddir(dir));) {
         int fd = parse_int(entry->d_name);
-        if ((fd < 0 || fd >= MAX_FD_SIZE || !allowed_fds[fd]) && fd != dfd) {
+        if (fd < 0 || fd >= 1024 || !allowed_fds[fd]) {
             close(fd);
         }
     }
-}
 
-void HookContext::fork_post() {
-    // Unblock SIGCHLD in case the original method didn't
-    sigmask(SIG_UNBLOCK, SIGCHLD);
-    g_ctx = nullptr;
-    unload_zygisk();
+    if (disable_zygisk_logging) {
+        close(logd_fd.exchange(-1));
+        android_logging();
+    }
 }
 
 void HookContext::run_modules_pre(const vector<int> &fds) {
@@ -526,7 +492,6 @@ void HookContext::run_modules_pre(const vector<int> &fds) {
 }
 
 void HookContext::run_modules_post() {
-    flags[POST_SPECIALIZE] = true;
     for (const auto &m : modules) {
         if (flags[APP_SPECIALIZE]) {
             m.postAppSpecialize(args.app);
@@ -535,34 +500,6 @@ void HookContext::run_modules_post() {
         }
         m.tryUnload();
     }
-}
-
-void HookContext::app_specialize_pre() {
-    flags[APP_SPECIALIZE] = true;
-
-    vector<int> module_fds;
-    int fd = remote_get_info(args.app->uid, process, &info_flags, module_fds);
-    if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
-        ZLOGI("[%s] is on the denylist\n", process);
-        flags[DO_REVERT_UNMOUNT] = true;
-    } else if (fd >= 0) {
-        run_modules_pre(module_fds);
-    }
-    close(fd);
-}
-
-
-void HookContext::app_specialize_post() {
-    run_modules_post();
-    if (info_flags & PROCESS_IS_MAGISK_APP) {
-        setenv("ZYGISK_ENABLED", "1", 1);
-    }
-
-    // Cleanups
-    env->ReleaseStringUTFChars(args.app->nice_name, process);
-    g_ctx = nullptr;
-    close(logd_fd.exchange(-1));
-    android_logging();
 }
 
 void HookContext::unload_zygisk() {
@@ -581,39 +518,78 @@ void HookContext::unload_zygisk() {
     }
 }
 
-bool HookContext::exempt_fd(int fd) {
-    if (flags[POST_SPECIALIZE] || flags[SKIP_FD_SANITIZATION])
-        return true;
-    if (!flags[APP_FORK_AND_SPECIALIZE])
-        return false;
-    exempted_fds.push_back(fd);
-    return true;
-}
-
 // -----------------------------------------------------------------
 
 void HookContext::nativeSpecializeAppProcess_pre() {
-    process = env->GetStringUTFChars(args.app->nice_name, nullptr);
-    ZLOGV("pre  specialize [%s]\n", process);
     g_ctx = this;
-    // App specialize does not check FD
-    flags[SKIP_FD_SANITIZATION] = true;
-    app_specialize_pre();
+    flags[APP_SPECIALIZE] = true;
+    process = env->GetStringUTFChars(args.app->nice_name, nullptr);
+    if (flags[APP_FORK_AND_SPECIALIZE]) {
+        ZLOGV("pre  forkAndSpecialize [%s]\n", process);
+    } else {
+        ZLOGV("pre  specialize [%s]\n", process);
+    }
+
+    bitset<1024> allowed_fds;
+    auto dir = open_dir("/proc/self/fd");
+    pre_specialize_start(dir.get(), allowed_fds);
+
+    vector<int> module_fds;
+    int fd = remote_get_info(args.app->uid, process, &info_flags, module_fds);
+    if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
+        ZLOGI("[%s] is on the hidelist\n", process);
+        flags[DO_REVERT_UNMOUNT] = true;
+        run_modules_pre(module_fds);
+        flags[DO_HIDE] = true; // Cannot hide zygisk at the momment
+        // Ensure separated namespace, allow denylist to handle isolated process before Android 11
+        if (args.app->mount_external == 0 /* MOUNT_EXTERNAL_NONE */) {
+            // Only apply the fix before Android 11, as it can cause undefined behaviour in later versions
+             char sdk_ver_str[92]; // PROPERTY_VALUE_MAX
+             if (__system_property_get("ro.build.version.sdk", sdk_ver_str) && atoi(sdk_ver_str) < 30) {
+                args.app->mount_external = 1 /* MOUNT_EXTERNAL_DEFAULT */;
+            }
+        }
+    } else if (fd >= 0) {
+        run_modules_pre(module_fds);
+    }
+    close(fd);
+
+    pre_specialize_end(dir.get(), allowed_fds);
 }
 
 void HookContext::nativeSpecializeAppProcess_post() {
-    ZLOGV("post specialize [%s]\n", process);
-    app_specialize_post();
-    unload_zygisk();
+    if (flags[APP_FORK_AND_SPECIALIZE]) {
+        ZLOGV("post forkAndSpecialize [%s]\n", process);
+    } else {
+        ZLOGV("post specialize [%s]\n", process);
+    }
+
+    env->ReleaseStringUTFChars(args.app->nice_name, process);
+    run_modules_post();
+    if (info_flags & PROCESS_IS_MAGISK_APP) {
+        setenv("ZYGISK_ENABLED", "1", 1);
+    }
+
+    // Cleanups
+    g_ctx = nullptr;
+    close(logd_fd.exchange(-1));
+    android_logging();
+    if (!flags[APP_FORK_AND_SPECIALIZE]) {
+        unload_zygisk();
+    }
 }
 
 void HookContext::nativeForkSystemServer_pre() {
-    ZLOGV("pre  forkSystemServer\n");
-    flags[SERVER_FORK_AND_SPECIALIZE] = true;
-
     fork_pre();
+    flags[SERVER_FORK_AND_SPECIALIZE] = true;
     if (pid != 0)
         return;
+
+    ZLOGV("pre  forkSystemServer\n");
+
+    bitset<1024> allowed_fds;
+    auto dir = open_dir("/proc/self/fd");
+    pre_specialize_start(dir.get(), allowed_fds);
 
     vector<int> module_fds;
     int fd = remote_get_info(1000, "system_server", &info_flags, module_fds);
@@ -636,7 +612,7 @@ void HookContext::nativeForkSystemServer_pre() {
         close(fd);
     }
 
-    sanitize_fds();
+    pre_specialize_end(dir.get(), allowed_fds);
 }
 
 void HookContext::nativeForkSystemServer_post() {
@@ -648,30 +624,45 @@ void HookContext::nativeForkSystemServer_post() {
 }
 
 void HookContext::nativeForkAndSpecialize_pre() {
-    process = env->GetStringUTFChars(args.app->nice_name, nullptr);
-    ZLOGV("pre  forkAndSpecialize [%s]\n", process);
-
-    flags[APP_FORK_AND_SPECIALIZE] = true;
-    if (args.app->fds_to_ignore == nullptr) {
-        // The field fds_to_ignore don't exist before Android 8.0, which FDs are not checked
-        flags[SKIP_FD_SANITIZATION] = true;
-    } else if (logd_fd >= 0) {
-        exempted_fds.push_back(logd_fd);
-    }
-
     fork_pre();
+    flags[APP_FORK_AND_SPECIALIZE] = true;
     if (pid == 0) {
-        app_specialize_pre();
+        nativeSpecializeAppProcess_pre();
+    } else if (!setup_fd_ignore()) {
+        close(logd_fd.exchange(-1));
     }
-    sanitize_fds();
 }
 
 void HookContext::nativeForkAndSpecialize_post() {
     if (pid == 0) {
-        ZLOGV("post forkAndSpecialize [%s]\n", process);
-        app_specialize_post();
+        nativeSpecializeAppProcess_post();
     }
     fork_post();
+}
+
+int sigmask(int how, int signum) {
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, signum);
+    return sigprocmask(how, &set, nullptr);
+}
+
+// Do our own fork before loading any 3rd party code
+// First block SIGCHLD, unblock after original fork is done
+void HookContext::fork_pre() {
+    g_ctx = this;
+    sigmask(SIG_BLOCK, SIGCHLD);
+    pid = old_fork();
+    if (g_ctx->flags[DO_HIDE]) {
+        unload_zygisk();
+    }
+}
+
+// Unblock SIGCHLD in case the original method didn't
+void HookContext::fork_post() {
+    sigmask(SIG_UNBLOCK, SIGCHLD);
+    g_ctx = nullptr;
+    unload_zygisk();
 }
 
 } // namespace

@@ -34,22 +34,83 @@ if echo $MAGISK_VER | grep -q '\.'; then
 else
   PRETTY_VER="$MAGISK_VER($MAGISK_VER_CODE)"
 fi
+
+[ -z "$BOOTMODE" ] && BOOTMODE=false
+
+$BOOTMODE && MAGISKTMP="$(magisk --path)"
+
 print_title "Magisk $PRETTY_VER Uninstaller"
 
 is_mounted /data || mount /data || abort "! Unable to mount /data, please uninstall with the Magisk app"
 mount_partitions
 check_data
-$DATA_DE || abort "! Cannot access /data, please uninstall with the Magisk app"
+if ! $DATA_DE; then
+    if [ -d "/data/unencrypted/MAGISKBIN" ]; then
+       mount -t tmpfs tmpfs /data/adb
+       mkdir /data/adb/magisk
+       mkdir /data/adb/modules
+       mount --bind /data/unencrypted/MAGISKBIN /data/adb/magisk
+       mount --bind /data/unencrypted/magisk_modules /data/adb/modules
+    fi
+    if [ ! -d "/data/adb/magisk" ] || mkdir /data/adb/magisk; then
+       abort "! Cannot access /data, please uninstall with the Magisk app"
+    fi
+fi
+
 get_flags
 find_boot_image
 
-[ -z $BOOTIMAGE ] && abort "! Unable to detect target image"
-ui_print "- Target image: $BOOTIMAGE"
+backup_restore(){
+test -f "${1}.gz" || { test -f "$1" && gzip -k "$1"; }
+test -f "${1}.gz" && { rm -rf "$1" && gzip -kdf "${1}.gz"; } || return 1
+}
+
+if ! $BOOTMODE; then
+    ui_print "********************************************"
+    ui_print " Due to the complex of recovery environment"
+    ui_print " Uninstall Magisk in Recovery is not guaranteed"
+    ui_print "********************************************"
+fi
 
 # Detect version and architecture
 api_level_arch_detect
 
 ui_print "- Device platform: $ABI"
+
+if { [ "$(grep_prop SYSTEMMODE "$MAGISKTMP/.magisk/config")" == "true" ] || [ -d /system/etc/init/magisk ]; } && $BOOTMODE; then
+
+ui_print "--- Uninstall Magisk in system partition"
+
+blockdev --setrw /dev/block/mapper/system$SLOT 2>/dev/null
+mount -o rw,remount /system || mount -o rw,remount /
+mount -o rw,remount /system_root
+mount -o rw,remount /vendor
+
+    for file in /vendor/etc/selinux/precompiled_sepolicy /odm/etc/selinux/precompiled_sepolicy /system/etc/selinux/precompiled_sepolicy /sepolicy /sepolicy_debug /sepolicy.unlocked; do
+        if [ -f "$file" ]; then
+            sepol="$file"
+            break
+        fi
+    done
+
+if [ ! -z "$sepol" ]; then
+    ui_print "- Restore sepolicy patch"
+    backup_restore "$sepol" && rm -rf "$sepol".gz
+fi
+
+
+
+ui_print "- Removing Magisk binaries"
+rm -rf /system/etc/init/*magisk* /system/system/etc/init/*magisk* /system_root/system/etc/init/*magisk* || abort "! Cannot uninstall"
+
+backup_restore /system/etc/init/bootanim.rc && rm -rf /system/etc/init/bootanim.rc.gz
+
+else
+
+ui_print "--- Uninstall Magisk in boot image"
+
+[ -z $BOOTIMAGE ] && abort "! Unable to detect target image"
+ui_print "- Target image: $BOOTIMAGE"
 
 BINDIR=$INSTALLER/lib/$ABI
 cd $BINDIR
@@ -137,12 +198,15 @@ case $((STATUS & 3)) in
     ;;
 esac
 
+fi
+
 ui_print "- Removing Magisk files"
 rm -rf \
 /cache/*magisk* /cache/unblock /data/*magisk* /data/cache/*magisk* /data/property/*magisk* \
 /data/Magisk.apk /data/busybox /data/custom_ramdisk_patch.sh /data/adb/*magisk* \
 /data/adb/post-fs-data.d /data/adb/service.d /data/adb/modules* \
-/data/unencrypted/magisk /metadata/magisk /persist/magisk /mnt/vendor/persist/magisk
+/data/unencrypted/magisk /metadata/magisk /persist/magisk /mnt/vendor/persist/magisk \
+/data/unencrypted/MAGISKBIN /data/unencrypted/magisk*
 
 ADDOND=/system/addon.d/99-magisk.sh
 if [ -f $ADDOND ]; then

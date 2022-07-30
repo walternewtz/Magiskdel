@@ -220,6 +220,10 @@ object Magisk : BaseSettingsItem.Section() {
     override val title = R.string.magisk.asText()
 }
 
+object MagiskHideClass : BaseSettingsItem.Section() {
+    override val title = R.string.settings_magiskhide_title.asText()
+}
+
 object Zygisk : BaseSettingsItem.Toggle() {
     override val title = R.string.zygisk.asText()
     override val description get() =
@@ -229,33 +233,28 @@ object Zygisk : BaseSettingsItem.Toggle() {
         get() = Config.zygisk
         set(value) {
             Config.zygisk = value
-            DenyList.isEnabled = value
-            DenyListConfig.isEnabled = value
             notifyPropertyChanged(BR.description)
+            DenyList.notifyPropertyChanged(BR.title)
             DenyList.notifyPropertyChanged(BR.description)
+            DenyListConfig.refresh()
         }
     val mismatch get() = value != Info.isZygiskEnabled
 }
 
 object DenyList : BaseSettingsItem.Toggle() {
-    override val title = R.string.settings_denylist_title.asText()
-    override val description get() =
-        if (isEnabled) {
-            if (Zygisk.mismatch)
-                R.string.reboot_apply_change.asText()
-            else
-                R.string.settings_denylist_summary.asText()
-        } else {
-            R.string.settings_denylist_error.asText(R.string.zygisk.asText())
-        }
+    override val title = R.string.settings_magiskhide_title.asText()
+    override val description get() = R.string.settings_magiskhide_summary.asText()
 
     override var value = Config.denyList
         set(value) {
             field = value
             val cmd = if (value) "enable" else "disable"
-            Shell.cmd("magisk --denylist $cmd").submit { result ->
+            Shell.cmd("magisk --hide $cmd").submit { result ->
                 if (result.isSuccess) {
                     Config.denyList = value
+                    DenyListConfig.refresh()
+                    HideDualSpace.refresh()
+                    WhiteList.refresh()
                 } else {
                     field = !value
                     notifyPropertyChanged(BR.checked)
@@ -263,17 +262,111 @@ object DenyList : BaseSettingsItem.Toggle() {
             }
         }
 
+}
+
+
+object AntiBLoop : BaseSettingsItem.Toggle() {
+    override val title = R.string.settings_anti_bootloop_title.asText()
+    override val description get() = R.string.settings_anti_bootloop_summary.asText()
+
+    override var value = Config.antiBLoop
+        set(value) {
+            field = value
+            val cmd = if (value) "1" else "0"
+            Shell.cmd("magisk --sqlite \"REPLACE INTO settings (key,value) VALUES('anti_bootloop',$cmd);\"").submit { result ->
+                if (result.isSuccess) {
+                    Config.antiBLoop = value
+                } else {
+                    field = !value
+                    notifyPropertyChanged(BR.checked)
+                }
+            }
+        }
+}
+
+object HideDualSpace : BaseSettingsItem.Toggle() {
+    override val title = R.string.settings_magiskhide_dualspace_title.asText()
+    override val description get() = R.string.settings_magiskhide_dualspace_summary.asText()
+
+    override var value = Config.hideDualSpace
+        set(value) {
+            field = value
+            val cmd = if (value) "add" else "rm"
+            Shell.cmd("magisk --hide $cmd dualspace").submit { result ->
+                if (result.isSuccess) {
+                    Config.hideDualSpace = value
+                } else {
+                    field = !value
+                    notifyPropertyChanged(BR.checked)
+                }
+            }
+        }    
     override fun refresh() {
-        isEnabled = Zygisk.value
+        isEnabled = Config.denyList && ! Config.whiteList
     }
 }
 
-object DenyListConfig : BaseSettingsItem.Blank() {
-    override val title = R.string.settings_denylist_config_title.asText()
-    override val description = R.string.settings_denylist_config_summary.asText()
+object CoreOnly : BaseSettingsItem.Toggle() {
+    override val title = R.string.settings_coreonly_title.asText()
+    override val description get() = R.string.settings_coreonly_summary.asText()
+    var coreonly = Shell.cmd("coreonly").exec().isSuccess;
+    override var value = coreonly
+        set(value) {
+            field = value
+            val cmd = if (value) "enable" else "disable"
+            Shell.cmd("coreonly $cmd").submit { result ->
+                if (result.isSuccess) {
+                    coreonly = value
+                } else {
+                    field = !value
+                    notifyPropertyChanged(BR.checked)
+                }
+            }
+        }
+}
+
+
+
+object WhiteList : BaseSettingsItem.Toggle() {
+    override val title = R.string.settings_magiskhide_whitelist_title.asText()
+    override val description get() = R.string.settings_magiskhide_whitelist_summary.asText()
+
+    override var value = Config.whiteList
+        set(value) {
+            field = value
+            val cmd = if (value) "whitelist" else "blacklist"
+            Shell.cmd("magisk --hide $cmd").submit { result ->
+                if (result.isSuccess) {
+                    Config.whiteList = value
+                    HideDualSpace.refresh()
+                    WhiteList.refresh()
+                } else {
+                    field = !value
+                    notifyPropertyChanged(BR.checked)
+                }
+            }
+        }    
     override fun refresh() {
-        isEnabled = Zygisk.value
+        isEnabled = Config.denyList
     }
+}
+
+object unloadMagisk : BaseSettingsItem.Blank() {
+    override val title = R.string.settings_unload_magisk_title.asText()
+    override val description = R.string.settings_unload_magisk_summary.asText()
+}
+
+object DenyListConfig : BaseSettingsItem.Blank() {
+    override val title = R.string.settings_hidelist_config_title.asText()
+    override val description = R.string.settings_hidelist_config_summary.asText()
+    override fun refresh() {
+        isEnabled = true
+    }
+}
+
+object RiruCore : BaseSettingsItem.Blank() {
+    override val title = R.string.settings_riru_title.asText()
+    override val description = R.string.settings_riru_summary.asText()
 }
 
 // --- Superuser
