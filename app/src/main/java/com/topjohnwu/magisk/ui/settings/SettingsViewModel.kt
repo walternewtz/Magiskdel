@@ -65,7 +65,7 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
                 SystemlessHosts
             ))
             if (Const.Version.atLeast_24_0()) {
-                list.addAll(listOf(AntiBLoop, Zygisk, MagiskHideClass, DenyList, WhiteList, HideDualSpace, DenyListConfig))
+                list.addAll(listOf(AntiBLoop, CoreOnly, Zygisk, MagiskHideClass, DenyList, WhiteList, HideDualSpace, DenyListConfig))
             }
         }
 

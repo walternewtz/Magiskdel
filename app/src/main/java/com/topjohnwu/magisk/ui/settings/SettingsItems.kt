@@ -306,6 +306,25 @@ object HideDualSpace : BaseSettingsItem.Toggle() {
     }
 }
 
+object CoreOnly : BaseSettingsItem.Toggle() {
+    override val title = R.string.settings_coreonly_title.asText()
+    override val description get() = R.string.settings_coreonly_summary.asText()
+    var coreonly = Shell.cmd("coreonly").exec().isSuccess;
+    override var value = coreonly
+        set(value) {
+            field = value
+            val cmd = if (value) "enable" else "disable"
+            Shell.cmd("coreonly $cmd").submit { result ->
+                if (result.isSuccess) {
+                    coreonly = value
+                } else {
+                    field = !value
+                    notifyPropertyChanged(BR.checked)
+                }
+            }
+        }
+}
+
 
 
 object WhiteList : BaseSettingsItem.Toggle() {

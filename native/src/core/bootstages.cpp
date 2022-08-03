@@ -535,7 +535,6 @@ void post_fs_data(int client) {
     } else {
         if(core_only(false)){
             LOGI("** Core-only mode, skip loading modules\n");
-            disable_deny();
         } else {
             exec_common_scripts("post-fs-data");
         }
@@ -566,7 +565,7 @@ void late_start(int client) {
 
     if (DAEMON_STATE < STATE_POST_FS_DATA_DONE || safe_mode)
         return;
-    if (!core_only(true)) {
+    if (!core_only(false)) {
         exec_common_scripts("service");
         exec_module_scripts("service");
     }

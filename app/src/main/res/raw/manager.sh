@@ -601,6 +601,24 @@ direct_install_system(){
     true
     return 0
 }
+
+
+coreonly(){
+    local i presistdir="/data/adb /data/unencrypted /persist /mnt/vendor/persist /cache /metadata"
+    if [ "$1" == "enable" ] || [ "$1" == "disable" ]; then
+        for i in $presistdir; do
+            rm -rf "$i/.disable_magisk"
+            [ "$1" == "disable" ] || touch "$i/.disable_magisk"
+        done
+        return 0
+    else
+        for i in $presistdir; do
+            [ -e "$i/.disable_magisk" ] && return 0
+        done
+        return 1
+    fi
+}
+
 #############
 # Initialize
 #############
