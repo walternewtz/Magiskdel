@@ -74,6 +74,9 @@ int magisk_main(int argc, char *argv[]) {
     } else if (argv[1] == "--unlock-blocks"sv) {
         unlock_blocks();
         return 0;
+    } else if (argv[1] == "--early-mount"sv) {
+        early_mount(dirname(argv[0]));
+        return 0;
     } else if (argv[1] == "--restorecon"sv) {
         restorecon();
         return 0;

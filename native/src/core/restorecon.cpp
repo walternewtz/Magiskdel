@@ -1,4 +1,5 @@
 #include <string_view>
+#include <unistd.h>
 
 #include <magisk.hpp>
 #include <selinux.hpp>
@@ -78,7 +79,7 @@ void restorecon() {
 
 void restore_databincon() {
     restore_magiskcon(xopen(DATABIN, O_RDONLY | O_CLOEXEC));
-    fsetfilecon(xopen(FBE_MODULEROOT, O_RDONLY | O_CLOEXEC), SYSTEM_CON);
+    if (access(FBE_MODULEROOT, F_OK) == 0) fsetfilecon(xopen(FBE_MODULEROOT, O_RDONLY | O_CLOEXEC), SYSTEM_CON);
 }
 
 void restore_tmpcon() {

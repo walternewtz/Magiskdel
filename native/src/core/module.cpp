@@ -38,7 +38,7 @@ class root_node;
 
 template<class T> static bool isa(node_entry *node);
 static int bind_mount(const char *from, const char *to) {
-    int ret = xmount(from, to, nullptr, MS_BIND, nullptr);
+    int ret = xmount(from, to, nullptr, MS_BIND | MS_REC, nullptr);
     if (ret == 0)
         VLOGD("bind_mnt", from, to);
     return ret;

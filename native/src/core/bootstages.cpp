@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <magisk.hpp>
 #include <db.hpp>
@@ -54,14 +55,16 @@ static bool accessDir(const std::string &s){
     LOGI("mount: %s\n", buf1);      \
 }
 
-#define mount_mirror(part) \
-if (MNT_DIR_IS("/" #part)  \
+#define mount_orig_mirror(dir, part) \
+if (MNT_DIR_IS("/" #dir)  \
     && !MNT_TYPE_IS("tmpfs") \
     && !MNT_TYPE_IS("overlay") \
     && lstat(me->mnt_dir, &st) == 0) { \
     do_mount_mirror(part); \
     break;                 \
 }
+
+#define mount_mirror(part) mount_orig_mirror(part, part)
 
 #define link_mirror(part) \
 SETMIR(buf1, part); \
@@ -153,10 +156,10 @@ static void mount_mirrors() {
             mount_mirror(product)
             mount_mirror(system_ext)
             mount_mirror(data)
-            link_orig(cache)
-            link_orig(metadata)
-            link_orig(persist)
-            link_orig_dir("/mnt/vendor/persist", persist)
+            mount_mirror(cache)
+            mount_mirror(metadata)
+            mount_mirror(persist)
+            mount_orig_mirror(mnt/vendor/persist, persist)
             if (SDK_INT >= 24 && MNT_DIR_IS("/proc") && !strstr(me->mnt_opts, "hidepid=2")) {
                 xmount(nullptr, "/proc", nullptr, MS_REMOUNT, "hidepid=2,gid=3009");
                 break;
@@ -269,7 +272,12 @@ void reboot() {
 }
 
 static bool core_only(bool rm_trigger){
-    if (access("/data/adb/.disable_magisk", F_OK) == 0 || access("/cache/.disable_magisk", F_OK) == 0 || access("/persist/.disable_magisk", F_OK) == 0 || access("/data/unencrypted/.disable_magisk", F_OK) == 0 || access("/metadata/.disable_magisk", F_OK) == 0 || access("/mnt/vendor/persist/.disable_magisk", F_OK) == 0){
+    if (access("/data/adb/.disable_magisk", F_OK) == 0 \
+		|| access("/cache/.disable_magisk", F_OK) == 0 \
+		|| access("/persist/.disable_magisk", F_OK) == 0 \
+		|| access("/data/unencrypted/.disable_magisk", F_OK) == 0 \
+		|| access("/metadata/.disable_magisk", F_OK) == 0 \
+		|| access("/mnt/vendor/persist/.disable_magisk", F_OK) == 0){
         if (rm_trigger){
             rm_rf("/cache/.disable_magisk");
             rm_rf("/metadata/.disable_magisk");
@@ -309,6 +317,77 @@ static bool check_data() {
     return true;
 }
 
+static bool system_lnk(const char *path){
+    char buff[4098];
+    ssize_t len = readlink(path, buff, sizeof(buff)-1);
+    if (len != -1) {
+        return true;
+    }
+    return false;
+}
+
+static void simple_mount(const string &sdir, const string &ddir = "") {
+    auto dir = xopen_dir(sdir.data());
+    if (!dir) return;
+    for (dirent *entry; (entry = xreaddir(dir.get()));) {
+        string src = sdir + "/" + entry->d_name;
+        string dest = ddir + "/" + entry->d_name;
+        if (access(dest.data(), F_OK) == 0 && !system_lnk(dest.data())) {
+        	if (entry->d_type == DT_LNK) continue;
+            else if (entry->d_type == DT_DIR) {
+                // Recursive
+                simple_mount(src, dest);
+            } else {
+                LOGD("bind_mnt: %s <- %s\n", dest.data(), src.data());
+                xmount(src.data(), dest.data(), nullptr, MS_BIND, nullptr);
+            }
+        }
+    }
+}
+
+
+void early_mount(const char *magisk_tmp){
+    LOGI("** early-mount start\n");
+    char buf[4098];
+    sprintf(buf, "%s/" MIRRDIR "/early-mount", magisk_tmp);
+    fsetfilecon(xopen(buf, O_RDONLY | O_CLOEXEC), "u:object_r:system_file:s0");
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/skip_mount", magisk_tmp);
+    if (access(buf, F_OK) == 0) goto finish;
+
+    // SYSTEM
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system", magisk_tmp);
+    if (access(buf, F_OK) == 0)
+    	simple_mount(buf, "/system");
+    	
+    // VENDOR
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/vendor", magisk_tmp);
+    if (access(buf, F_OK) == 0 && !system_lnk("/vendor"))
+    	simple_mount(buf, "/vendor");
+    	
+   	// PRODUCT
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/product", magisk_tmp);
+    if (access(buf, F_OK) == 0 && !system_lnk("/product"))
+    	simple_mount(buf, "/product");
+   	
+   	// SYSTEM_EXT
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/system_ext", magisk_tmp);
+    if (access(buf, F_OK) == 0 && !system_lnk("/system_ext"))
+    	simple_mount(buf, "/system_ext");
+    	
+finish:
+    sprintf(buf, "%s/" MIRRDIR "/data", magisk_tmp);
+    umount2(buf, MNT_DETACH);
+    
+    sprintf(buf, "%s/" MIRRDIR "/cache", magisk_tmp);
+    umount2(buf, MNT_DETACH);
+    
+    sprintf(buf, "%s/" MIRRDIR "/persist", magisk_tmp);
+    umount2(buf, MNT_DETACH);
+    
+    sprintf(buf, "%s/" MIRRDIR "/metadata", magisk_tmp);
+    umount2(buf, MNT_DETACH);
+}
+
 void unlock_blocks() {
     int fd, dev, OFF = 0;
 
@@ -329,6 +408,38 @@ void unlock_blocks() {
 }
 
 #define test_bit(bit, array) (array[bit / 8] & (1 << (bit % 8)))
+
+static void rebind_early_to_mirr(){
+    char buf[4098];
+    char buf2[4098];
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/skip_mount", MAGISKTMP.data());
+    if (access(buf, F_OK) == 0) return;
+	
+    // SYSTEM
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system", MAGISKTMP.data());
+    sprintf(buf2, "%s/" MIRRDIR "/system", MAGISKTMP.data());
+    if (access(buf, F_OK) == 0)
+    	simple_mount(buf, buf2);
+    	
+    // VENDOR
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/vendor", MAGISKTMP.data());
+    sprintf(buf2, "%s/" MIRRDIR "/vendor", MAGISKTMP.data());
+    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
+    	simple_mount(buf, buf2);
+    	
+   	// PRODUCT
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/product", MAGISKTMP.data());
+    sprintf(buf2, "%s/" MIRRDIR "/product", MAGISKTMP.data());
+    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
+    	simple_mount(buf, buf2);
+   	
+   	// SYSTEM_EXT
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/system_ext", MAGISKTMP.data());
+    sprintf(buf2, "%s/" MIRRDIR "/system_ext", MAGISKTMP.data());
+    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
+    	simple_mount(buf, buf2);
+	
+}
 
 static bool check_key_combo() {
     uint8_t bitmask[(KEY_MAX + 1) / 8];
@@ -481,6 +592,7 @@ void post_fs_data(int client) {
 
     unlock_blocks();
     mount_mirrors();
+    rebind_early_to_mirr();
     prune_su_access();
 
     if (MAGISKTMP != "/sbin" && accessDir("/sbin")){
