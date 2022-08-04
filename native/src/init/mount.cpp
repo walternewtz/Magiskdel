@@ -118,16 +118,21 @@ static void switch_root(const string &path) {
 
 void MagiskInit::mount_rules_dir() {
     char path[128];
+    char mirrpath[128];
     xrealpath(BLOCKDIR, blk_info.block_dev, sizeof(blk_info.block_dev));
     xrealpath(MIRRDIR, path, sizeof(path));
+    xrealpath(MIRRDIR, mirrpath, sizeof(mirrpath));
+    string custom_early_dir = "/data/unencrypted/early-mount.d"s;
+    string full_early_dir;
+
     char *b = blk_info.block_dev + strlen(blk_info.block_dev);
     char *p = path + strlen(path);
 
     auto do_mount = [&](const char *type) -> bool {
         xmkdir(path, 0755);
         bool success = xmount(blk_info.block_dev, path, type, 0, nullptr) == 0;
-        if (success)
-            mount_list.emplace_back(path);
+//        if (success)
+//            mount_list.emplace_back(path);
         return success;
     };
 
@@ -161,6 +166,7 @@ void MagiskInit::mount_rules_dir() {
         }
         // Unencrypted, directly use module paths
         custom_rules_dir = string(path);
+        custom_early_dir = "/data/adb/early-mount.d"s;
     }
     goto success;
 
@@ -178,6 +184,7 @@ cache:
     if (!do_mount("ext4"))
         goto metadata;
     custom_rules_dir = path + "/magisk"s;
+    custom_early_dir = "/cache/early-mount.d"s;
     goto success;
 
 metadata:
@@ -188,6 +195,7 @@ metadata:
     if (setup_block() < 0 || !do_mount("ext4"))
         goto persist;
     custom_rules_dir = path + "/magisk"s;
+    custom_early_dir = "/metadata/early-mount.d"s;
     goto success;
 
 persist:
@@ -198,6 +206,7 @@ persist:
     if (setup_block() < 0 || !do_mount("ext4"))
         return;
     custom_rules_dir = path + "/magisk"s;
+    custom_early_dir = "/persist/early-mount.d"s;
 
 success:
     // Create symlinks so we don't need to go through this logic again
@@ -211,6 +220,12 @@ success:
     } else {
         xsymlink(custom_rules_dir.data(), path);
     }
+    
+    strcpy(p, "/early-mount");
+    full_early_dir = mirrpath + custom_early_dir;
+    xmkdir(full_early_dir.data(), 0755);
+    custom_early_dir = "."s + custom_early_dir;
+    xsymlink(custom_early_dir.data(), path);
 }
 
 bool LegacySARInit::mount_system_root() {
