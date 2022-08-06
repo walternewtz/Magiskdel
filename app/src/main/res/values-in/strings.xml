@@ -235,10 +235,7 @@
     <string name="add_shortcut_msg">Setelah menyembunyikan aplikasi ini, nama dan ikonnya mungkin sulit dikenali. Apakah Anda ingin menambahkan pintasan cantik ke layar utama?</string>
     <string name="app_not_found">Tidak ditemukan aplikasi untuk menangani tindakan ini</string>
     <string name="reboot_apply_change">Mulai ulang untuk menerapkan perubahan</string>
-    <string name="restore_app_confirmation">Ini akan mengembalikan aplikasi tersembunyi kembali ke aplikasi asli. Apakah Anda benar-benar ingin melakukan ini?</string>
-    <string name="settings_anti_bootloop_title">Proteksi dari Bootloop</string>
-    <string name="settings_anti_bootloop_summary">Otomatis mulai ulang ke mode hanya Inti jika proses zygote gagal memulai dalam beberapa kali</string>
-   
+    <string name="restore_app_confirmation">Ini akan mengembalikan aplikasi tersembunyi kembali ke aplikasi asli. Apakah Anda benar-benar ingin melakukan ini?</string>  
 
     <!--Delta-->
     <string name="direct_install_system">Langsung pasang pada partisi sistem</string>
@@ -256,6 +253,10 @@
     <string name="settings_magiskhide_dualspace_title">MagiskHide di Ruang Kedua</string>
     <string name="settings_magiskhide_dualspace_summary">Menjalankan MagiskHide pada semua proses di Ruang Kedua</string>
     <string name="settings_magiskhide_whitelist_title">MagiskHide di Daftar Putih</string>
-    <string name="settings_magiskhide_whitelist_summary">Sembunyikan Magisk pada semua aplikasi kecuali aplikasi yang sebelumnya sudah diberikan akses root oleh Magisk</string>
+    <string name="settings_magiskhide_whitelist_summary">Sembunyikan Magisk pada semua aplikasi kecuali aplikasi yang sebelumnya sudah diberikan akses root oleh Magisk. Menggunakan MagiskHide di Daftar Putih dapat menyebabkan beberapa modul dan sistem bermasalah, jangan gunakan apabila tidak perlu</string>
+    <string name="settings_anti_bootloop_title">Proteksi dari Bootloop</string>
+    <string name="settings_anti_bootloop_summary">Otomatis mulai ulang ke mode hanya Inti jika proses zygote gagal memulai dalam beberapa kali</string>
+    <string name="settings_coreonly_title">Mode hanya Inti</string>
+    <string name="settings_coreonly_summary">Mengaktifkan mode yang hanya menjalankan MagiskSU (Akses root) dan MagiskHide, tidak ada modul yang dijalankan di mode ini. Mulai ulang diperlukan untuk menerapkan perubahan</string>
 
 </resources>

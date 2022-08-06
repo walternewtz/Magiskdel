@@ -256,5 +256,7 @@
     <string name="settings_magiskhide_whitelist_title">MagiskHide 白名单模式</string>
     <string name="settings_anti_bootloop_summary">zygote进程多次启动失败会重启到Core-only模式</string>
     <string name="settings_anti_bootloop_title">引导循环保护</string>
+    <string name="settings_coreonly_title">僅核心模式</string>
+    <string name="settings_coreonly_summary">只有 MagiskSU（根訪問）和 MagiskHide 等核心功能可用，並且在純核心模式下不會加載任何模塊。需要重啟才能生效。 </string>
 
 </resources>

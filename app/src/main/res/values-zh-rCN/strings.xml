@@ -253,10 +253,13 @@
     <string name="settings_magiskhide_dualspace_title">MagiskHide 多开配置</string>
     <string name="settings_hidelist_config_summary">选择需要加入隐藏列表的进程</string>
     <string name="settings_hidelist_config_title">配置 MagiskHide</string>
-    <string name="settings_magiskhide_whitelist_summary">为所有（除之前授予过超级用户之外）的应用隐藏 Magisk</string>
+    <string name="settings_magiskhide_whitelist_summary">为所有（除之前授予过超级用户之外）的应用隐藏 Magisk。启用本功能可能导致系统卡顿或更严重的问题，请谨慎开启</string>
     <string name="settings_magiskhide_whitelist_title">MagiskHide 白名单模式</string>
-    <string name="settings_anti_bootloop_summary">zygote 进程多次启动失败时重启至核心模式</string>
-    <string name="settings_anti_bootloop_title">引导循环保护</string>
+    <string name="settings_anti_bootloop_summary">Zygote 进程多次启动失败时重启至核心模式</string>
+    <string name="settings_anti_bootloop_title">Bootloop 保护</string>
+    <string name="settings_coreonly_summary">仅核心功能，例如 MagiskSU (即 Root 权限) 和 MagiskHide 可用，不加载任何模块。开启本开关并重启手机后可激活核心模式</string>
+    <string name="settings_coreonly_title">核心模式</string>
+
 
 
 
