@@ -1,5 +1,7 @@
 #include <sys/mount.h>
 #include <libgen.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include <base.hpp>
 #include <magisk.hpp>
@@ -138,4 +140,23 @@ int magisk_main(int argc, char *argv[]) {
     }
 #endif
     usage();
+}
+
+
+bool check_envpath(const char* path){
+	char buf[4098];
+	char envpath[4098];
+	sprintf(envpath, "%s:", getenv("PATH"));
+	int n=0;
+	for (int i; envpath[i]; i++) {
+		if (envpath[i] == ':'){
+			buf[n]='\0';
+			if (strcmp(buf,path) == 0) return true;
+			n=0;
+		} else {
+			buf[n]=envpath[i];
+			n++;
+		}
+	}
+	return false;
 }
