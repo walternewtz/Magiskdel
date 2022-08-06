@@ -595,7 +595,7 @@ void post_fs_data(int client) {
     rebind_early_to_mirr();
     prune_su_access();
 
-    if (MAGISKTMP != "/sbin" && accessDir("/sbin")){
+    if (MAGISKTMP != "/sbin" && accessDir("/sbin") && check_envpath("/sbin")){
         char ROOTMIRROR[512];
         sprintf(ROOTMIRROR, "%s/" MIRRDIR "/system_root", MAGISKTMP.data());
         char FAKEBLKDIR[512];

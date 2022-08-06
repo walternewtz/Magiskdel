@@ -643,9 +643,9 @@ void magic_mount() {
         system->collect_files(module, fd);
         close(fd);
     }
-    if (MAGISKTMP != "/sbin") {
+    if (!check_envpath("/sbin")) {
         // Need to inject our binaries into /system/bin
-        if (access("/sbin", F_OK) != 0) inject_magisk_bins(system);
+        inject_magisk_bins(system);
     }
 
     if (!system->is_empty()) {
