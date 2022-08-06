@@ -21,6 +21,8 @@
 
 using namespace std;
 
+static const char *F2FS_SYSFS_PATH = nullptr;
+
 static bool safe_mode = false;
 bool zygisk_enabled = false;
 static bool accessDir(const std::string &s){
@@ -486,7 +488,6 @@ static bool check_key_combo() {
     return true;
 }
 
-#define F2FS_SYSFS_PATH "/sys/fs/f2fs"
 #define F2FS_DEF_CP_INTERVAL "60"
 #define F2FS_TUNE_CP_INTERVAL "200"
 #define F2FS_DEF_GC_THREAD_URGENT_SLEEP_TIME "500"
@@ -540,6 +541,17 @@ static void __tune_f2fs(const char *dir, const char *device, const char *node,
 }
 
 static void tune_f2fs() {
+	// Check f2fs sys path
+	if (access("/sys/fs/f2fs", F_OK) == 0)
+        F2FS_SYSFS_PATH = "/sys/fs/f2fs";
+    else if (access("/sys/fs/f2fs_dev", F_OK) == 0)
+        F2FS_SYSFS_PATH = "/sys/fs/f2fs_dev";
+    else {
+        LOGI("/sys/fs/f2fs is not found, skip tuning!\n");
+        return;
+    }
+	
+	
     // Tune f2fs sysfs node
     if (auto dir = xopen_dir(F2FS_SYSFS_PATH); dir) {
         for (dirent *entry; (entry = readdir(dir.get()));) {
@@ -564,6 +576,7 @@ static void tune_f2fs() {
         }
     }
 }
+
 
 /***********************
  * Boot Stage Handlers *
