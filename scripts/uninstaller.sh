@@ -206,7 +206,9 @@ rm -rf \
 /data/Magisk.apk /data/busybox /data/custom_ramdisk_patch.sh /data/adb/*magisk* \
 /data/adb/post-fs-data.d /data/adb/service.d /data/adb/modules* \
 /data/unencrypted/magisk /metadata/magisk /persist/magisk /mnt/vendor/persist/magisk \
-/data/unencrypted/MAGISKBIN /data/unencrypted/magisk*
+/data/unencrypted/MAGISKBIN /data/unencrypted/magisk* /cache/early-mount.d \
+/data/unencrypted/early-mount.d /metadata/early-mount.d /persist/early-mount.d \
+/mnt/vendor/persist/early-mount.d /data/adb/early-mount.d
 
 ADDOND=/system/addon.d/99-magisk.sh
 if [ -f $ADDOND ]; then
