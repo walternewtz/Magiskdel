@@ -401,8 +401,14 @@ remount_check(){
 }
 
 backup_restore(){
-test -f "${1}.gz" || { test -f "$1" && gzip -k "$1"; }
-test -f "${1}.gz" && { rm -rf "$1" && gzip -kdf "${1}.gz"; } || return 1
+    # if gz is not found and orig file is found, backup to gz
+    if [ ! -f "${1}.gz" ] && [ -f "$1" ]; then
+        gzip -k "$1" && return 0
+    elif [ -f "${1}.gz" ]; then
+    # if gz found, restore from gz
+        rm -rf "$1" && gzip -kdf "${1}.gz" && return 0
+    fi
+    return 1
 }
 
 cleanup_system_installation(){
@@ -588,8 +594,10 @@ direct_install_system(){
     fi
     echo "- Add init boot script"
     hijackrc="$MIRRORDIR/system/etc/init/magisk.rc"
-    backup_restore "$MIRRORDIR/system/etc/init/bootanim.rc" && hijackrc=$MIRRORDIR/system/etc/init/bootanim.rc
-    echo "$(magiskrc $SELINUX)" >>"$MIRRORDIR/system/etc/init/bootanim.rc" || return 1
+    if [ -f "$MIRRORDIR/system/etc/init/bootanim.rc" ]; then
+        backup_restore "$MIRRORDIR/system/etc/init/bootanim.rc" && hijackrc="$MIRRORDIR/system/etc/init/bootanim.rc"
+    fi
+    echo "$(magiskrc $SELINUX)" >>"$hijackrc" || return 1
     
     if [ -d "$MIRRORDIR/system/addon.d" ]; then
         echo "- Add Magisk survival script"
