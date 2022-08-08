@@ -19,6 +19,24 @@
 
 #define TRIGGER_BL "/dev/.magisk_ztrigger"
 
+#define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
+
+static int bind_mount(const char *from, const char *to) {
+    int ret = xmount(from, to, nullptr, MS_BIND, nullptr);
+    if (ret == 0)
+        VLOGD("bind_mnt", from, to);
+    return ret;
+}
+
+static int tmpfs_mount(const char *from, const char *to){
+    int ret = xmount(from, to, "tmpfs", 0, "mode=755");
+    if (ret == 0)
+        VLOGD("mnt_tmp", "tmpfs", to);
+    return ret;
+}
+
+
+
 using namespace std;
 
 static const char *F2FS_SYSFS_PATH = nullptr;
@@ -101,6 +119,7 @@ static void recreate_sbin(const char *mirror, bool use_bind_mount) {
         if (S_ISLNK(st.st_mode)) {
             xreadlinkat(src, entry->d_name, buf, sizeof(buf));
             xsymlink(buf, sbin_path.data());
+            VLOGD("create", buf, sbin_path.data());
         } else {
             if (use_bind_mount) {
                 auto mode = st.st_mode & 0777;
@@ -110,9 +129,10 @@ static void recreate_sbin(const char *mirror, bool use_bind_mount) {
                 else
                     close(xopen(sbin_path.data(), O_CREAT | O_WRONLY | O_CLOEXEC, mode));
 
-                if (xmount(buf, sbin_path.data(), nullptr, MS_BIND, nullptr)) LOGD("mnt_bind: %s <- %s\n", sbin_path.data(), buf);
+                bind_mount(buf, sbin_path.data());
             } else {
                 xsymlink(buf, sbin_path.data());
+                VLOGD("create", buf, sbin_path.data());
             }
         }
     }
@@ -129,6 +149,7 @@ static void bind_magisk_bins(const char *mirror) {
         if (S_ISLNK(st.st_mode)) {
             xreadlinkat(src, entry->d_name, buf, sizeof(buf));
             xsymlink(buf, sbin_path.data());
+            VLOGD("create", buf, sbin_path.data());
         } else {
             sprintf(buf, "%s/%s", mirror, entry->d_name);
             string bufc(buf);
@@ -139,7 +160,7 @@ static void bind_magisk_bins(const char *mirror) {
                 xmkdir(sbin_path.data(), mode);
             else
                 close(xopen(sbin_path.data(), O_CREAT | O_WRONLY | O_CLOEXEC, mode));
-            xmount(buf, sbin_path.data(), nullptr, MS_BIND, nullptr);
+            bind_mount(buf, sbin_path.data());
         }
     }
 }
@@ -616,7 +637,7 @@ void post_fs_data(int client) {
         if (accessDir(ROOTMIRROR)){
             char SBINMIRROR[1024];
             sprintf(SBINMIRROR, "%s/sbin", ROOTMIRROR);
-            xmount(FAKEBLKDIR, "/sbin", "tmpfs", 0, "mode=755");
+            tmpfs_mount(FAKEBLKDIR, "/sbin");
             setfilecon("/sbin", "u:object_r:rootfs:s0");
             recreate_sbin(SBINMIRROR, true);
         } else {
@@ -625,7 +646,7 @@ void post_fs_data(int client) {
             mkdir("/sbin_mirror", 0777);
             clone_attr("/sbin", "/sbin_mirror");
             link_path("/sbin", "/sbin_mirror");
-            xmount(FAKEBLKDIR, "/sbin", "tmpfs", 0, "mode=755");
+            tmpfs_mount(FAKEBLKDIR, "/sbin");
             setfilecon("/sbin", "u:object_r:rootfs:s0");
             recreate_sbin("/sbin_mirror", true);
             rm_rf("/sbin_mirror");
@@ -726,7 +747,7 @@ void reboot_coreonly(){
     close(xopen("/metadata/.disable_magisk", O_RDONLY | O_CREAT, 0));
     close(xopen("/mnt/vendor/persist/.disable_magisk", O_RDONLY | O_CREAT, 0));
     close(xopen("/data/adb/.disable_magisk", O_RDONLY | O_CREAT, 0));
-    exec_command_sync("/system/bin/reboot");
+    exec_command_sync("/system/bin/reboot", "recovery");
 }
 
 
