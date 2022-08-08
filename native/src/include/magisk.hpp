@@ -14,14 +14,6 @@
 #define DATABIN         SECURE_DIR "/magisk"
 #define MAGISKDB        SECURE_DIR "/magisk.db"
 
-// unencrypted paths for FBE
-#define FBE_DIR      			"/data/unencrypted"
-#define FBE_DIR_LINK      		"../unencrypted"
-#define FBE_MODULEROOT      	FBE_DIR "/magisk_modules"
-#define FBE_MODULEROOT_LINK     FBE_DIR_LINK "/magisk_modules"
-#define FBE_DATABIN         	FBE_DIR "/MAGISKBIN"
-#define FBE_DATABIN_LINK        FBE_DIR_LINK "/MAGISKBIN"
-
 // tmpfs paths
 extern std::string  MAGISKTMP;
 #define INTLROOT    ".magisk"

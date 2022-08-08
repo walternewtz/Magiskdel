@@ -60,5 +60,4 @@ pid_t xfork();
 int xpoll(pollfd *fds, nfds_t nfds, int timeout);
 ssize_t xrealpath(const char *path, char *buf, size_t bufsiz);
 int xmknod(const char *pathname, mode_t mode, dev_t dev);
-
 } // extern "C"

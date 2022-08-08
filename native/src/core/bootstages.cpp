@@ -19,16 +19,30 @@
 
 #define TRIGGER_BL "/dev/.magisk_ztrigger"
 
+#define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
+
+static int bind_mount(const char *from, const char *to) {
+    int ret = xmount(from, to, nullptr, MS_BIND, nullptr);
+    if (ret == 0)
+        VLOGD("bind_mnt", from, to);
+    return ret;
+}
+
+static int tmpfs_mount(const char *from, const char *to){
+    int ret = xmount(from, to, "tmpfs", 0, "mode=755");
+    if (ret == 0)
+        VLOGD("mnt_tmp", "tmpfs", to);
+    return ret;
+}
+
+
+
 using namespace std;
 
 static const char *F2FS_SYSFS_PATH = nullptr;
 
 static bool safe_mode = false;
 bool zygisk_enabled = false;
-static bool accessDir(const std::string &s){
-    struct stat buffer;
-    return (stat (s.c_str(), &buffer) == 0);
-}
 
 /*********
  * Setup *
@@ -101,6 +115,7 @@ static void recreate_sbin(const char *mirror, bool use_bind_mount) {
         if (S_ISLNK(st.st_mode)) {
             xreadlinkat(src, entry->d_name, buf, sizeof(buf));
             xsymlink(buf, sbin_path.data());
+            VLOGD("create", buf, sbin_path.data());
         } else {
             if (use_bind_mount) {
                 auto mode = st.st_mode & 0777;
@@ -110,9 +125,10 @@ static void recreate_sbin(const char *mirror, bool use_bind_mount) {
                 else
                     close(xopen(sbin_path.data(), O_CREAT | O_WRONLY | O_CLOEXEC, mode));
 
-                if (xmount(buf, sbin_path.data(), nullptr, MS_BIND, nullptr)) LOGD("mnt_bind: %s <- %s\n", sbin_path.data(), buf);
+                bind_mount(buf, sbin_path.data());
             } else {
                 xsymlink(buf, sbin_path.data());
+                VLOGD("create", buf, sbin_path.data());
             }
         }
     }
@@ -129,6 +145,7 @@ static void bind_magisk_bins(const char *mirror) {
         if (S_ISLNK(st.st_mode)) {
             xreadlinkat(src, entry->d_name, buf, sizeof(buf));
             xsymlink(buf, sbin_path.data());
+            VLOGD("create", buf, sbin_path.data());
         } else {
             sprintf(buf, "%s/%s", mirror, entry->d_name);
             string bufc(buf);
@@ -139,7 +156,7 @@ static void bind_magisk_bins(const char *mirror) {
                 xmkdir(sbin_path.data(), mode);
             else
                 close(xopen(sbin_path.data(), O_CREAT | O_WRONLY | O_CLOEXEC, mode));
-            xmount(buf, sbin_path.data(), nullptr, MS_BIND, nullptr);
+            bind_mount(buf, sbin_path.data());
         }
     }
 }
@@ -209,42 +226,18 @@ static bool magisk_env() {
                 unlink(alt);
                 continue;
             }
-            if (accessDir(FBE_DIR)){
-            	// when /data/unencrypted exists
-            	rm_rf(FBE_DATABIN);
-            	rm_rf(DATABIN);
-            	cp_afc(alt, FBE_DATABIN);
-            	xsymlink(FBE_DATABIN_LINK, DATABIN);
-            	rm_rf(alt);
-            	
-            } else {
-            	rm_rf(DATABIN);
-            	cp_afc(alt, DATABIN);
-            	rm_rf(alt);
-            }
+            rm_rf(DATABIN);
+           	cp_afc(alt, DATABIN);
+           	rm_rf(alt);
             break;
         }
     }
     rm_rf("/cache/data_adb");
 
     // Directories in /data/adb
-    if (accessDir(FBE_DIR)){
-    	// when /data/unencrypted exists
-    	xmkdir(FBE_DATABIN, 0755);
-    	rm_rf(DATABIN);
-     	xsymlink(FBE_DATABIN_LINK, DATABIN);
-     	
-     	if (!accessDir(MODULEROOT)){
-     		// only do when /data/adb/modules does not exist
-    		rm_rf(MODULEROOT);
-    		xmkdir(FBE_MODULEROOT, 0755);
-     		xsymlink(FBE_MODULEROOT_LINK, MODULEROOT);
-     	}
-    } else {
-        if (!accessDir(MODULEROOT)) rm_rf(MODULEROOT);
-    	xmkdir(DATABIN, 0755);
-    	xmkdir(MODULEROOT, 0755);
-    }
+    if (!is_dir_exist(MODULEROOT)) rm_rf(MODULEROOT);
+    xmkdir(DATABIN, 0755);
+    xmkdir(MODULEROOT, 0755);
     xmkdir(SECURE_DIR "/post-fs-data.d", 0755);
     xmkdir(SECURE_DIR "/service.d", 0755);
 
@@ -351,6 +344,11 @@ static void simple_mount(const string &sdir, const string &ddir = "") {
 void early_mount(const char *magisk_tmp){
     LOGI("** early-mount start\n");
     char buf[4098];
+    const char *part[]={
+        "/vendor", "/product", "/system_ext",
+        nullptr
+    };
+
     sprintf(buf, "%s/" MIRRDIR "/early-mount", magisk_tmp);
     fsetfilecon(xopen(buf, O_RDONLY | O_CLOEXEC), "u:object_r:system_file:s0");
     sprintf(buf, "%s/" MIRRDIR "/early-mount/skip_mount", magisk_tmp);
@@ -360,34 +358,24 @@ void early_mount(const char *magisk_tmp){
     sprintf(buf, "%s/" MIRRDIR "/early-mount/system", magisk_tmp);
     if (access(buf, F_OK) == 0)
     	simple_mount(buf, "/system");
-    	
-    // VENDOR
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/vendor", magisk_tmp);
-    if (access(buf, F_OK) == 0 && !system_lnk("/vendor"))
-    	simple_mount(buf, "/vendor");
-    	
-   	// PRODUCT
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/product", magisk_tmp);
-    if (access(buf, F_OK) == 0 && !system_lnk("/product"))
-    	simple_mount(buf, "/product");
-   	
-   	// SYSTEM_EXT
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/system_ext", magisk_tmp);
-    if (access(buf, F_OK) == 0 && !system_lnk("/system_ext"))
-    	simple_mount(buf, "/system_ext");
-    	
+
+    // VENDOR, PRODUCT, SYSTEM_EXT
+    for (int i=0;part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "/early-mount/system%s", magisk_tmp, part[i]);
+        if (access(buf, F_OK) == 0 && !system_lnk(part[i]))
+            simple_mount(buf, part[i]);
+    }
+
 finish:
-    sprintf(buf, "%s/" MIRRDIR "/data", magisk_tmp);
-    umount2(buf, MNT_DETACH);
-    
-    sprintf(buf, "%s/" MIRRDIR "/cache", magisk_tmp);
-    umount2(buf, MNT_DETACH);
-    
-    sprintf(buf, "%s/" MIRRDIR "/persist", magisk_tmp);
-    umount2(buf, MNT_DETACH);
-    
-    sprintf(buf, "%s/" MIRRDIR "/metadata", magisk_tmp);
-    umount2(buf, MNT_DETACH);
+
+    const char *preinit_part[]={
+        "/data", "/persist", "/metadata", "/cache",
+        nullptr
+    };
+    for (int i=0;preinit_part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "%s", magisk_tmp, preinit_part[i]);
+        umount2(buf, MNT_DETACH);
+    }
 }
 
 void unlock_blocks() {
@@ -422,25 +410,19 @@ static void rebind_early_to_mirr(){
     sprintf(buf2, "%s/" MIRRDIR "/system", MAGISKTMP.data());
     if (access(buf, F_OK) == 0)
     	simple_mount(buf, buf2);
-    	
-    // VENDOR
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/vendor", MAGISKTMP.data());
-    sprintf(buf2, "%s/" MIRRDIR "/vendor", MAGISKTMP.data());
-    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
-    	simple_mount(buf, buf2);
-    	
-   	// PRODUCT
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/product", MAGISKTMP.data());
-    sprintf(buf2, "%s/" MIRRDIR "/product", MAGISKTMP.data());
-    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
-    	simple_mount(buf, buf2);
-   	
-   	// SYSTEM_EXT
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/system_ext", MAGISKTMP.data());
-    sprintf(buf2, "%s/" MIRRDIR "/system_ext", MAGISKTMP.data());
-    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
-    	simple_mount(buf, buf2);
-	
+
+    const char *part[]={
+        "/vendor", "/product", "/system_ext",
+        nullptr
+    };
+
+    // VENDOR, PRODUCT, SYSTEM_EXT
+    for (int i=0;part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "/early-mount/system%s", MAGISKTMP.data(), part[i]);
+        sprintf(buf2, "%s/" MIRRDIR "%s", MAGISKTMP.data(), part[i]);
+        if (access(buf, F_OK) == 0 && !system_lnk(buf2))
+            simple_mount(buf, buf2);
+    }
 }
 
 static bool check_key_combo() {
@@ -608,15 +590,15 @@ void post_fs_data(int client) {
     rebind_early_to_mirr();
     prune_su_access();
 
-    if (MAGISKTMP != "/sbin" && accessDir("/sbin") && check_envpath("/sbin")){
+    if (MAGISKTMP != "/sbin" && access("/sbin", F_OK) == 0 && check_envpath("/sbin")){
         char ROOTMIRROR[512];
         sprintf(ROOTMIRROR, "%s/" MIRRDIR "/system_root", MAGISKTMP.data());
         char FAKEBLKDIR[512];
         sprintf(FAKEBLKDIR, "%s/" BLOCKDIR "/tmpfs", MAGISKTMP.data());
-        if (accessDir(ROOTMIRROR)){
+        if (access(ROOTMIRROR, F_OK) == 0){
             char SBINMIRROR[1024];
             sprintf(SBINMIRROR, "%s/sbin", ROOTMIRROR);
-            xmount(FAKEBLKDIR, "/sbin", "tmpfs", 0, "mode=755");
+            tmpfs_mount(FAKEBLKDIR, "/sbin");
             setfilecon("/sbin", "u:object_r:rootfs:s0");
             recreate_sbin(SBINMIRROR, true);
         } else {
@@ -625,7 +607,7 @@ void post_fs_data(int client) {
             mkdir("/sbin_mirror", 0777);
             clone_attr("/sbin", "/sbin_mirror");
             link_path("/sbin", "/sbin_mirror");
-            xmount(FAKEBLKDIR, "/sbin", "tmpfs", 0, "mode=755");
+            tmpfs_mount(FAKEBLKDIR, "/sbin");
             setfilecon("/sbin", "u:object_r:rootfs:s0");
             recreate_sbin("/sbin_mirror", true);
             rm_rf("/sbin_mirror");
@@ -726,7 +708,7 @@ void reboot_coreonly(){
     close(xopen("/metadata/.disable_magisk", O_RDONLY | O_CREAT, 0));
     close(xopen("/mnt/vendor/persist/.disable_magisk", O_RDONLY | O_CREAT, 0));
     close(xopen("/data/adb/.disable_magisk", O_RDONLY | O_CREAT, 0));
-    exec_command_sync("/system/bin/reboot");
+    exec_command_sync("/system/bin/reboot", "recovery");
 }
 
 
