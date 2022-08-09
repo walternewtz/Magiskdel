@@ -2,6 +2,7 @@
 #include <libgen.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <base.hpp>
 #include <magisk.hpp>
@@ -77,7 +78,9 @@ int magisk_main(int argc, char *argv[]) {
         unlock_blocks();
         return 0;
     } else if (argv[1] == "--early-mount"sv) {
-        early_mount(dirname(argv[0]));
+        if (getuid() != 0) return -1;
+        const char *tmppath = dirname(argv[0]);
+        early_mount(tmppath);
         return 0;
     } else if (argv[1] == "--restorecon"sv) {
         restorecon();
@@ -144,19 +147,19 @@ int magisk_main(int argc, char *argv[]) {
 
 
 bool check_envpath(const char* path){
-	char buf[4098];
-	char envpath[4098];
-	sprintf(envpath, "%s:", getenv("PATH"));
-	int n=0;
-	for (int i; envpath[i]; i++) {
-		if (envpath[i] == ':'){
-			buf[n]='\0';
-			if (strcmp(buf,path) == 0) return true;
-			n=0;
-		} else {
-			buf[n]=envpath[i];
-			n++;
-		}
-	}
-	return false;
+    char buf[4098];
+    char envpath[4098];
+    sprintf(envpath, "%s:", getenv("PATH"));
+    int n=0;
+    for (int i=0; envpath[i]; i++) {
+        if (envpath[i] == ':'){
+            buf[n]='\0';
+            if (strcmp(buf,path) == 0) return true;
+                n=0;
+        } else {
+            buf[n]=envpath[i];
+            n++;
+        }
+    }
+    return false;
 }

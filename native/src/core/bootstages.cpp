@@ -372,6 +372,11 @@ static void simple_mount(const string &sdir, const string &ddir = "") {
 void early_mount(const char *magisk_tmp){
     LOGI("** early-mount start\n");
     char buf[4098];
+    const char *part[]={
+        "/vendor", "/product", "/system_ext",
+        nullptr
+    };
+
     sprintf(buf, "%s/" MIRRDIR "/early-mount", magisk_tmp);
     fsetfilecon(xopen(buf, O_RDONLY | O_CLOEXEC), "u:object_r:system_file:s0");
     sprintf(buf, "%s/" MIRRDIR "/early-mount/skip_mount", magisk_tmp);
@@ -381,34 +386,24 @@ void early_mount(const char *magisk_tmp){
     sprintf(buf, "%s/" MIRRDIR "/early-mount/system", magisk_tmp);
     if (access(buf, F_OK) == 0)
     	simple_mount(buf, "/system");
-    	
-    // VENDOR
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/vendor", magisk_tmp);
-    if (access(buf, F_OK) == 0 && !system_lnk("/vendor"))
-    	simple_mount(buf, "/vendor");
-    	
-   	// PRODUCT
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/product", magisk_tmp);
-    if (access(buf, F_OK) == 0 && !system_lnk("/product"))
-    	simple_mount(buf, "/product");
-   	
-   	// SYSTEM_EXT
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/system_ext", magisk_tmp);
-    if (access(buf, F_OK) == 0 && !system_lnk("/system_ext"))
-    	simple_mount(buf, "/system_ext");
-    	
+
+    // VENDOR, PRODUCT, SYSTEM_EXT
+    for (int i=0;part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "/early-mount/system%s", magisk_tmp, part[i]);
+        if (access(buf, F_OK) == 0 && !system_lnk(part[i]))
+            simple_mount(buf, part[i]);
+    }
+
 finish:
-    sprintf(buf, "%s/" MIRRDIR "/data", magisk_tmp);
-    umount2(buf, MNT_DETACH);
-    
-    sprintf(buf, "%s/" MIRRDIR "/cache", magisk_tmp);
-    umount2(buf, MNT_DETACH);
-    
-    sprintf(buf, "%s/" MIRRDIR "/persist", magisk_tmp);
-    umount2(buf, MNT_DETACH);
-    
-    sprintf(buf, "%s/" MIRRDIR "/metadata", magisk_tmp);
-    umount2(buf, MNT_DETACH);
+
+    const char *preinit_part[]={
+        "/data", "/persist", "/metadata", "/cache",
+        nullptr
+    };
+    for (int i=0;preinit_part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "%s", magisk_tmp, preinit_part[i]);
+        umount2(buf, MNT_DETACH);
+    }
 }
 
 void unlock_blocks() {
@@ -443,25 +438,19 @@ static void rebind_early_to_mirr(){
     sprintf(buf2, "%s/" MIRRDIR "/system", MAGISKTMP.data());
     if (access(buf, F_OK) == 0)
     	simple_mount(buf, buf2);
-    	
-    // VENDOR
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/vendor", MAGISKTMP.data());
-    sprintf(buf2, "%s/" MIRRDIR "/vendor", MAGISKTMP.data());
-    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
-    	simple_mount(buf, buf2);
-    	
-   	// PRODUCT
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/product", MAGISKTMP.data());
-    sprintf(buf2, "%s/" MIRRDIR "/product", MAGISKTMP.data());
-    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
-    	simple_mount(buf, buf2);
-   	
-   	// SYSTEM_EXT
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system/system_ext", MAGISKTMP.data());
-    sprintf(buf2, "%s/" MIRRDIR "/system_ext", MAGISKTMP.data());
-    if (access(buf, F_OK) == 0 && !system_lnk(buf2))
-    	simple_mount(buf, buf2);
-	
+
+    const char *part[]={
+        "/vendor", "/product", "/system_ext",
+        nullptr
+    };
+
+    // VENDOR, PRODUCT, SYSTEM_EXT
+    for (int i=0;part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "/early-mount/system%s", MAGISKTMP.data(), part[i]);
+        sprintf(buf2, "%s/" MIRRDIR "%s", MAGISKTMP.data(), part[i]);
+        if (access(buf, F_OK) == 0 && !system_lnk(buf2))
+            simple_mount(buf, buf2);
+    }
 }
 
 static bool check_key_combo() {
