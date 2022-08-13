@@ -577,15 +577,7 @@ direct_install_system(){
             remount_ro_system
             return 1
         fi
-        if is_rootfs; then
-            # check if u:r:su:s0 has permission to live patch sepolicy
-            if ! runcon u:r:su:s0 sh -c "$INSTALLDIR"'/magiskpolicy --live "permissive su"'; then
-                echo "! Selinux context (u:r:su:s0) cannot live patch sepolicy"
-                cleanup_system_installation
-                remount_ro_system
-                return 1
-            fi
-        else
+        if ! is_rootfs; then
             patch_sepolicy_file || return 1
         fi
     else
