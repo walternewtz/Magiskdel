@@ -79,6 +79,45 @@ ui_print "- Device platform: $ABI"
 
 if { [ "$(grep_prop SYSTEMMODE "$MAGISKTMP/.magisk/config")" == "true" ] || [ -d /system/etc/init/magisk ]; } && $BOOTMODE; then
 
+MIRRORDIR="/dev/sysmount_mirror"
+ROOTDIR="$MIRRORDIR/system_root"
+SYSTEMDIR="$MIRRORDIR/system"
+VENDORDIR="$MIRRORDIR/vendor"
+	
+if $BOOTMODE; then
+    # make sure sysmount is clean
+    umount -l "$MIRRORDIR" 2>/dev/null
+    rm -rf "$MIRRORDIR"
+    mkdir "$MIRRORDIR" || return 1
+    mount -t tmpfs -o 'mode=0755' tmpfs "$MIRRORDIR" || return 1
+    mkdir "$MIRRORDIR/block"
+    if is_rootfs; then
+        ROOTDIR=/
+        mkblknode "$MIRRORDIR/block/system" /system
+        mkdir "$SYSTEMDIR"
+        force_mount "$MIRRORDIR/block/system" "$SYSTEMDIR" || return 1
+    else
+        mkblknode "$MIRRORDIR/block/system_root" /
+        mkdir "$ROOTDIR"
+        force_mount "$MIRRORDIR/block/system_root" "$ROOTDIR" || return 1
+        ln -fs ./system_root/system "$SYSTEMDIR"
+    fi
+
+    # check if /vendor is seperated fs
+    if mountpoint -q /vendor; then
+        mkblknode "$MIRRORDIR/block/vendor" /vendor
+        mkdir "$VENDORDIR"
+        force_mount "$MIRRORDIR/block/vendor" "$VENDORDIR" || return 1
+     else
+        ln -fs ./system/vendor "$VENDORDIR"
+    fi
+else
+    local MIRRORDIR="/" ROOTDIR SYSTEMDIR VENDORDIR
+    ROOTDIR="$MIRRORDIR/system_root"
+    SYSTEMDIR="$MIRRORDIR/system"
+    VENDORDIR="$MIRRORDIR/vendor"
+fi
+
 ui_print "--- Uninstall Magisk in system partition"
 
 blockdev --setrw /dev/block/mapper/system$SLOT 2>/dev/null
@@ -86,24 +125,29 @@ mount -o rw,remount /system || mount -o rw,remount /
 mount -o rw,remount /system_root
 mount -o rw,remount /vendor
 
-    for file in /vendor/etc/selinux/precompiled_sepolicy /odm/etc/selinux/precompiled_sepolicy /system/etc/selinux/precompiled_sepolicy /sepolicy /sepolicy_debug /sepolicy.unlocked; do
-        if [ -f "$file" ]; then
-            sepol="$file"
-            break
-        fi
-    done
+for file in /vendor/etc/selinux/precompiled_sepolicy /odm/etc/selinux/precompiled_sepolicy /system/etc/selinux/precompiled_sepolicy /system_root/sepolicy /system_root/sepolicy_debug /system_root/sepolicy.unlocked; do
+    if [ -f "$MIRRORDIR$file" ]; then
+        sepol="$file"
+        break
+    fi
+done
 
 if [ ! -z "$sepol" ]; then
     ui_print "- Restore sepolicy patch"
-    backup_restore "$sepol" && rm -rf "$sepol".gz
+    backup_restore "$MIRRORDIR$sepol" && rm -rf "$MIRRORDIR$sepol".gz
+fi
+
+if [ -f "$MIRRORDIR/system/bin/app_process.orig" ]; then
+    rm -rf "$MIRRORDIR/system/bin/app_process"
+    mv -f "$MIRRORDIR/system/bin/app_process.orig" "$MIRRORDIR/system/bin/app_process"
 fi
 
 
-
 ui_print "- Removing Magisk binaries"
-rm -rf /system/etc/init/*magisk* /system/system/etc/init/*magisk* /system_root/system/etc/init/*magisk* || abort "! Cannot uninstall"
+rm -rf $MIRRORDIR/system/etc/init/*magisk* $MIRRORDIR/system/system/etc/init/*magisk* $MIRRORDIR/system_root/system/etc/init/*magisk* \
+$MIRRORDIR/system/xbin/magisk $MIRRORDIR/system/xbin/.magisk || abort "! Cannot uninstall"
 
-backup_restore /system/etc/init/bootanim.rc && rm -rf /system/etc/init/bootanim.rc.gz
+backup_restore "$MIRRORDIR/system/etc/init/bootanim.rc" && rm -rf "$MIRRORDIR/system/etc/init/bootanim.rc.gz"
 
 else
 
