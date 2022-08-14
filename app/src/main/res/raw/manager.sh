@@ -280,6 +280,11 @@ coreonly(){
     fi
 }
 
+use_full_magisk(){
+    [ "$(magisk --path)" == "/system/xbin" ] && return 1
+    return 0
+}
+
 #############
 # Initialize
 #############

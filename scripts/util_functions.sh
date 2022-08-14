@@ -991,8 +991,12 @@ cleanup_system_installation(){
 }
 
 unmount_system_mirrors(){
-    umount -l "$MIRRORDIR"
-    rm -rf "$MIRRORDIR"
+	if $BOOTMODE; then
+        umount -l "$MIRRORDIR"
+        rm -rf "$MIRRORDIR"
+    else
+        recovery_cleanup
+    fi
 }
 
 print_title_delta(){
@@ -1002,14 +1006,19 @@ print_title_delta(){
 }
 
 warn_system_ro(){
-    echo "! System partition is read-only"
+    ui_print "! System partition is read-only"
     unmount_system_mirrors
     return 1
 }
 
 is_rootfs(){
     local root_blkid="$(mountpoint -d /)"
-    test "${root_blkid%:*}" == 0 && return 0
+	if ! $BOOTMODE && [ -d /system_root ] && mountpoint /system_root; then
+        return 1
+    fi
+    if $BOOTMODE && [ "${root_blkid%:*}" == 0 ]; then
+        return 0
+    fi
     return 1
 }
 
@@ -1044,128 +1053,198 @@ direct_install_system(){
 
     # if Magisk is running, not system mode and trigger file not found
     if $RUNNING_MAGISK && ! $SYSTEMMODE && [ ! -f /dev/.magisk_systemmode_allow ]; then
-        echo "[!] Magisk (maybe) is installed into boot image"
-        echo ""
-        echo "  This option should be used for emulator only!"
-        echo ""
-        echo "  If you still want to install Magisk in /system"
-        echo "  make sure:"
-        echo "    + Magisk is not installed in boot image"
-        echo "    + Boot image is restored to stock"
-        echo ""
+        ui_print "[!] Magisk (maybe) is installed into boot image"
+        ui_print ""
+        ui_print "  This option should be used for emulator only!"
+        ui_print ""
+        ui_print "  If you still want to install Magisk in /system"
+        ui_print "  make sure:"
+        ui_print "    + Magisk is not installed in boot image"
+        ui_print "    + Boot image is restored to stock"
+        ui_print ""
         sleep 3
-        echo "! Press install again if you definitely did the above"
+        ui_print "! Press install again if you definitely did the above"
         rm -rf /dev/.magisk_systemmode_allow
         touch /dev/.magisk_systemmode_allow
         return 1
     fi
         
-    echo "- Remount system partition as read-write"
+    ui_print "- Remount system partition as read-write"
     local MIRRORDIR="/dev/sysmount_mirror" ROOTDIR SYSTEMDIR VENDORDIR
 
     ROOTDIR="$MIRRORDIR/system_root"
     SYSTEMDIR="$MIRRORDIR/system"
     VENDORDIR="$MIRRORDIR/vendor"
+	
+	if $BOOTMODE; then
 
-    # make sure sysmount is clean
-    umount -l "$MIRRORDIR" 2>/dev/null
-    rm -rf "$MIRRORDIR"
-    mkdir "$MIRRORDIR" || return 1
-    mount -t tmpfs -o 'mode=0755' tmpfs "$MIRRORDIR" || return 1
-    mkdir "$MIRRORDIR/block"
-    if is_rootfs; then
-        ROOTDIR=/
-        mkblknode "$MIRRORDIR/block/system" /system
-        mkdir "$SYSTEMDIR"
-        force_mount "$MIRRORDIR/block/system" "$SYSTEMDIR" || return 1
-    else
-        mkblknode "$MIRRORDIR/block/system_root" /
-        mkdir "$ROOTDIR"
-        force_mount "$MIRRORDIR/block/system_root" "$ROOTDIR" || return 1
-        ln -fs ./system_root/system "$SYSTEMDIR"
-   fi
+        # make sure sysmount is clean
+        umount -l "$MIRRORDIR" 2>/dev/null
+        rm -rf "$MIRRORDIR"
+        mkdir "$MIRRORDIR" || return 1
+        mount -t tmpfs -o 'mode=0755' tmpfs "$MIRRORDIR" || return 1
+        mkdir "$MIRRORDIR/block"
+        if is_rootfs; then
+            ROOTDIR=/
+            mkblknode "$MIRRORDIR/block/system" /system
+            mkdir "$SYSTEMDIR"
+            force_mount "$MIRRORDIR/block/system" "$SYSTEMDIR" || return 1
+        else
+            mkblknode "$MIRRORDIR/block/system_root" /
+            mkdir "$ROOTDIR"
+            force_mount "$MIRRORDIR/block/system_root" "$ROOTDIR" || return 1
+            ln -fs ./system_root/system "$SYSTEMDIR"
+        fi
 
-   # check if /vendor is seperated fs
-   if mountpoint -q /vendor; then
-        mkblknode "$MIRRORDIR/block/vendor" /vendor
-        mkdir "$VENDORDIR"
-        force_mount "$MIRRORDIR/block/vendor" "$VENDORDIR" || return 1
-   else
-        ln -fs ./system/vendor "$VENDORDIR"
-   fi
+        # check if /vendor is seperated fs
+        if mountpoint -q /vendor; then
+            mkblknode "$MIRRORDIR/block/vendor" /vendor
+            mkdir "$VENDORDIR"
+            force_mount "$MIRRORDIR/block/vendor" "$VENDORDIR" || return 1
+         else
+            ln -fs ./system/vendor "$VENDORDIR"
+        fi
+	else
+        local MIRRORDIR="/" ROOTDIR SYSTEMDIR VENDORDIR
+        ROOTDIR="$MIRRORDIR/system_root"
+        SYSTEMDIR="$MIRRORDIR/system"
+        VENDORDIR="$MIRRORDIR/vendor"
+        mount_partitions
+        mount_apex
+	fi
+		
 
-
-    echo "- Copy files to system partition"
+    ui_print "- Cleaning up"
+    local checkfile="$MIRRORDIR/system/.check_$(random_str 10 20)"
+    # test write, need atleast 20mb
+    dd if=/dev/zero of="$checkfile" bs=1024 count=20000 || { rm -rf "$checkfile"; ui_print "! Insufficient free space or system write protection"; cleanup_system_installation; return 1; }
+    rm -rf "$checkfile"
     cleanup_system_installation || return 1
-    mkdir -p "$SYSTEMDIR/etc/init/magisk"
+
     local magisk_applet=magisk32 magisk_name=magisk32
     if [ "$IS64BIT" == true ]; then
         magisk_name=magisk64
         magisk_applet="magisk32 magisk64"
     fi
-    for magisk in $magisk_applet magiskpolicy magiskinit; do
-        cat "$INSTALLDIR/$magisk" >"$MIRRORDIR$MAGISKSYSTEMDIR/$magisk" || { echo "! Unable to write Magisk binaries to system"; echo "! Insufficient free space or system write protection"; cleanup_system_installation; return 1; }
-    done
-    echo "SYSTEMMODE=true" >"$MIRRORDIR$MAGISKSYSTEMDIR/config" 
-    chcon -R u:object_r:system_file:s0 "$MIRRORDIR$MAGISKSYSTEMDIR"
-    chmod -R 700 "$MIRRORDIR$MAGISKSYSTEMDIR"
 
-    # test live patch
-    local SELINUX=true
-    if [ -d "/sys/fs/selinux" ]; then
-        echo "- Check if kernel can use dynamic sepolicy patch"
-        if ! "$INSTALLDIR/magiskpolicy" --live "permissive su" &>/dev/null; then
-            echo "! Kernel does not support dynamic sepolicy patch"
-            cleanup_system_installation
-            unmount_system_mirrors
-            return 1
-        fi
-        if ! is_rootfs; then
-          {
-            echo "- Patch sepolicy file"
-            local sepol file
-            for file in /vendor/etc/selinux/precompiled_sepolicy /system_root/odm/etc/selinux/precompiled_sepolicy /system/etc/selinux/precompiled_sepolicy /system_root/sepolicy /system_root/sepolicy_debug /system_root/sepolicy.unlocked; do
-                if [ -f "$MIRRORDIR$file" ]; then
-                    sepol="$file"
-                    break
-                fi
-            done
-            if [ -z "$sepol" ]; then
-                echo "! Cannot find sepolicy file"
+    ui_print "- Copy files to system partition"
+    mkdir -p "$MIRRORDIR$MAGISKSYSTEMDIR" || return 1
+    for magisk in $magisk_applet magiskpolicy magiskinit; do
+        cat "$INSTALLDIR/$magisk" >"$MIRRORDIR$MAGISKSYSTEMDIR/$magisk" || { ui_print "! Unable to write Magisk binaries to system"; cleanup_system_installation; return 1; }
+    done
+
+    if [ "$API" -gt 24 ]; then
+        echo -e "SYSTEMMODE=true\nRECOVERYMODE=false" >"$MIRRORDIR$MAGISKSYSTEMDIR/config"
+        chcon -R u:object_r:system_file:s0 "$MIRRORDIR$MAGISKSYSTEMDIR"
+        chmod -R 700 "$MIRRORDIR$MAGISKSYSTEMDIR"
+
+        # test live patch
+        local SELINUX=true
+        if [ -d "/sys/fs/selinux" ]; then
+            ui_print "- Check if kernel can use dynamic sepolicy patch"
+            if ! "$INSTALLDIR/magiskpolicy" --live "permissive su" &>/dev/null; then
+                ui_print "! Kernel does not support dynamic sepolicy patch"
                 cleanup_system_installation
                 unmount_system_mirrors
                 return 1
-            else
-                echo "- Sepolicy file is $sepol"
-                backup_restore "$MIRRORDIR$sepol"
-                if ! is_rootfs && ! "$INSTALLDIR/magiskpolicy" --load "$MIRRORDIR$sepol" --save "$MIRRORDIR$sepol" --magisk "allow * magisk_file lnk_file *" "allow su * * *" "permissive su" &>/dev/null; then
-                    echo "! Sepolicy failed to patch"
+            fi
+            if ! is_rootfs; then
+              {
+                ui_print "- Patch sepolicy file"
+                local sepol file
+                for file in /vendor/etc/selinux/precompiled_sepolicy /system_root/odm/etc/selinux/precompiled_sepolicy /system/etc/selinux/precompiled_sepolicy /system_root/sepolicy /system_root/sepolicy_debug /system_root/sepolicy.unlocked; do
+                    if [ -f "$MIRRORDIR$file" ]; then
+                        sepol="$file"
+                        break
+                    fi
+                done
+                if [ -z "$sepol" ]; then
+                    ui_print "! Cannot find sepolicy file"
                     cleanup_system_installation
                     unmount_system_mirrors
                     return 1
+                else
+                    ui_print "- Sepolicy file is $sepol"
+                    backup_restore "$MIRRORDIR$sepol"
+                    if ! is_rootfs && ! "$INSTALLDIR/magiskpolicy" --load "$MIRRORDIR$sepol" --save "$MIRRORDIR$sepol" --magisk "allow * magisk_file lnk_file *" "allow su * * *" "permissive su" &>/dev/null; then
+                        ui_print "! Sepolicy failed to patch"
+                        cleanup_system_installation
+                        unmount_system_mirrors
+                        return 1
+                    fi
                 fi
+              }
             fi
-          }
+        else
+            SELINUX=false
+            ui_print "- SeLinux is disabled, no need to patch!"
         fi
-    else
-        SELINUX=false
-        echo "- SeLinux is disabled, no need to patch!"
-    fi
-    echo "- Add init boot script"
-    {
-        hijackrc="$MIRRORDIR/system/etc/init/magisk.rc"
-        if [ -f "$MIRRORDIR/system/etc/init/bootanim.rc" ]; then
-            backup_restore "$MIRRORDIR/system/etc/init/bootanim.rc" && hijackrc="$MIRRORDIR/system/etc/init/bootanim.rc"
+        ui_print "- Add init boot script"
+        {
+            hijackrc="$MIRRORDIR/system/etc/init/magisk.rc"
+            if [ -f "$MIRRORDIR/system/etc/init/bootanim.rc" ]; then
+                backup_restore "$MIRRORDIR/system/etc/init/bootanim.rc" && hijackrc="$MIRRORDIR/system/etc/init/bootanim.rc"
+            fi
+        }
+        echo "$(magiskrc $SELINUX)" >>"$hijackrc" || return 1
+        
+        if [ -d "$MIRRORDIR/system/addon.d" ]; then
+            ui_print "- Add Magisk survival script"
+            rm -rf "$MIRRORDIR/system/addon.d/99-magisk.sh"
+            echo "$addond_magisk_system" >"$MIRRORDIR/system/addon.d/99-magisk.sh"
         fi
-    }
-    echo "$(magiskrc $SELINUX)" >>"$hijackrc" || return 1
-    
-    if [ -d "$MIRRORDIR/system/addon.d" ]; then
-        echo "- Add Magisk survival script"
-        rm -rf "$MIRRORDIR/system/addon.d/99-magisk.sh"
-        echo "$addond_magisk_system" >"$MIRRORDIR/system/addon.d/99-magisk.sh"
+    elif [ "$API" -gt 19 ]; then
+        cat "$INSTALLDIR/busybox" >"$MIRRORDIR$MAGISKSYSTEMDIR/busybox" || { ui_print "! Unable to write Magisk binaries to system"; cleanup_system_installation; return 1; }
+        chmod 755 "$MIRRORDIR$MAGISKSYSTEMDIR/busybox"
+        if [ ! -f "$MIRRORDIR/system/bin/app_process.orig" ]; then
+            rm -rf "$MIRRORDIR/system/bin/app_process.orig"
+            mv -f "$MIRRORDIR/system/bin/app_process" "$MIRRORDIR/system/bin/app_process.orig"
+        fi
+        rm -rf "$MIRRORDIR/system/bin/app_process"
+        # hijack app_process to launch magisk su
+        cat <<EOF >"$MIRRORDIR/system/bin/app_process"
+#!/system/etc/init/magisk/busybox sh
+set -o standalone
+setenforce 0
+if ! pidof magiskd &>/dev/null; then
+{
+    mount -o rw,remount /
+    mkdir /sbin
+    rm -rf /root
+    mkdir /root
+    ln /sbin/* /root
+    umount -l /sbin
+    mount -t tmpfs tmpfs /sbin
+    ln -fs /root/* /sbin
+    mount -o ro,remount /
+    cp -af "$MAGISKSYSTEMDIR/magisk64" /sbin/magisk64
+    cp -af "$MAGISKSYSTEMDIR/magisk32" /sbin/magisk32
+    cp -af "$MAGISKSYSTEMDIR/magiskinit" /sbin/magiskinit
+    cp -af "$MAGISKSYSTEMDIR/magiskpolicy" /sbin/magiskpolicy
+    chmod 755 /sbin/magisk64 /sbin/magisk32 /sbin/magiskpolicy /sbin/magiskinit
+    ln -s ./$magisk_name /sbin/magisk
+    ln -s ./magisk /sbin/su
+    ln -s ./magisk /sbin/magiskhide
+    ln -s ./magisk /sbin/resetprop
+    ln -s ./magiskpolicy /sbin/supolicy
+    /sbin/magiskinit -x manager /sbin/stub.apk
+    mkdir -p /sbin/.magisk/mirror
+    mkdir -p /sbin/.magisk/block
+    echo -e "SYSTEMMODE=true\nRECOVERYMODE=false" >/sbin/.magisk/config
+    # run magisk daemon
+    /sbin/magisk --post-fs-data
+    while [ ! -f /dev/.magisk_unblock ]; do sleep 1; done
+    rm -rf /dev/.magisk_unblock
+    /sbin/magisk --service
+} 2>/dev/null
+fi
+exec /system/bin/app_process.orig "\$@"
+EOF
+        chmod 755 "$MIRRORDIR/system/bin/app_process"
     fi
+
     unmount_system_mirrors
+	$BOOTMODE || recovery_cleanup
     fix_env "$INSTALLDIR"
     true
     return 0
