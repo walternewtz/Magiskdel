@@ -117,3 +117,11 @@ char *xrealpath(const char *path, char *resolved_path) {
     }
     return ret;
 }
+
+bool is_dir_exist(const char *s){
+    struct stat st;
+    if(stat(s,&st) == 0)
+        if(st.st_mode & S_IFDIR != 0)
+            return true;
+    return false;
+}

@@ -60,5 +60,5 @@ pid_t xfork();
 int xpoll(struct pollfd *fds, nfds_t nfds, int timeout);
 char *xrealpath(const char *path, char *resolved_path);
 int xmknod(const char *pathname, mode_t mode, dev_t dev);
-
+bool is_dir_exist(const char *s);
 } // extern "C"

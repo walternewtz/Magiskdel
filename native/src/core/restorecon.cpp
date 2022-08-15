@@ -79,7 +79,6 @@ void restorecon() {
 
 void restore_databincon() {
     restore_magiskcon(xopen(DATABIN, O_RDONLY | O_CLOEXEC));
-    if (access(FBE_MODULEROOT, F_OK) == 0) fsetfilecon(xopen(FBE_MODULEROOT, O_RDONLY | O_CLOEXEC), SYSTEM_CON);
 }
 
 void restore_tmpcon() {

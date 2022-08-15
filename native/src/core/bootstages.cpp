@@ -43,10 +43,6 @@ static const char *F2FS_SYSFS_PATH = nullptr;
 
 static bool safe_mode = false;
 bool zygisk_enabled = false;
-static bool accessDir(const std::string &s){
-    struct stat buffer;
-    return (stat (s.c_str(), &buffer) == 0);
-}
 
 /*********
  * Setup *
@@ -230,42 +226,18 @@ static bool magisk_env() {
                 unlink(alt);
                 continue;
             }
-            if (accessDir(FBE_DIR)){
-            	// when /data/unencrypted exists
-            	rm_rf(FBE_DATABIN);
-            	rm_rf(DATABIN);
-            	cp_afc(alt, FBE_DATABIN);
-            	xsymlink(FBE_DATABIN_LINK, DATABIN);
-            	rm_rf(alt);
-            	
-            } else {
-            	rm_rf(DATABIN);
-            	cp_afc(alt, DATABIN);
-            	rm_rf(alt);
-            }
+            rm_rf(DATABIN);
+           	cp_afc(alt, DATABIN);
+           	rm_rf(alt);
             break;
         }
     }
     rm_rf("/cache/data_adb");
 
     // Directories in /data/adb
-    if (accessDir(FBE_DIR)){
-    	// when /data/unencrypted exists
-    	xmkdir(FBE_DATABIN, 0755);
-    	rm_rf(DATABIN);
-     	xsymlink(FBE_DATABIN_LINK, DATABIN);
-     	
-     	if (!accessDir(MODULEROOT)){
-     		// only do when /data/adb/modules does not exist
-    		rm_rf(MODULEROOT);
-    		xmkdir(FBE_MODULEROOT, 0755);
-     		xsymlink(FBE_MODULEROOT_LINK, MODULEROOT);
-     	}
-    } else {
-        if (!accessDir(MODULEROOT)) rm_rf(MODULEROOT);
-    	xmkdir(DATABIN, 0755);
-    	xmkdir(MODULEROOT, 0755);
-    }
+    if (!is_dir_exist(MODULEROOT)) rm_rf(MODULEROOT);
+    xmkdir(DATABIN, 0755);
+    xmkdir(MODULEROOT, 0755);
     xmkdir(SECURE_DIR "/post-fs-data.d", 0755);
     xmkdir(SECURE_DIR "/service.d", 0755);
 
@@ -618,12 +590,12 @@ void post_fs_data(int client) {
     rebind_early_to_mirr();
     prune_su_access();
 
-    if (MAGISKTMP != "/sbin" && accessDir("/sbin") && check_envpath("/sbin")){
+    if (MAGISKTMP != "/sbin" && access("/sbin", F_OK) == 0 && check_envpath("/sbin")){
         char ROOTMIRROR[512];
         sprintf(ROOTMIRROR, "%s/" MIRRDIR "/system_root", MAGISKTMP.data());
         char FAKEBLKDIR[512];
         sprintf(FAKEBLKDIR, "%s/" BLOCKDIR "/tmpfs", MAGISKTMP.data());
-        if (accessDir(ROOTMIRROR)){
+        if (access(ROOTMIRROR, F_OK) == 0){
             char SBINMIRROR[1024];
             sprintf(SBINMIRROR, "%s/sbin", ROOTMIRROR);
             tmpfs_mount(FAKEBLKDIR, "/sbin");
