@@ -349,6 +349,15 @@ void early_mount(const char *magisk_tmp){
         nullptr
     };
 
+    const char *preinit_part[]={
+        "/data/unencrypted", "/data/adb", "/persist", "/metadata", "/cache",
+        nullptr
+    };
+    for (int i=0;preinit_part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "%s/.disable_magisk", magisk_tmp, preinit_part[i]);
+        if (access(buf, F_OK) == 0) goto finish;
+    }
+
     sprintf(buf, "%s/" MIRRDIR "/early-mount", magisk_tmp);
     fsetfilecon(xopen(buf, O_RDONLY | O_CLOEXEC), "u:object_r:system_file:s0");
     sprintf(buf, "%s/" MIRRDIR "/early-mount/skip_mount", magisk_tmp);
@@ -367,13 +376,12 @@ void early_mount(const char *magisk_tmp){
     }
 
 finish:
-
-    const char *preinit_part[]={
+    const char *mirror_part[]={
         "/data", "/persist", "/metadata", "/cache",
         nullptr
     };
-    for (int i=0;preinit_part[i];i++) {
-        sprintf(buf, "%s/" MIRRDIR "%s", magisk_tmp, preinit_part[i]);
+    for (int i=0;mirror_part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "%s", magisk_tmp, mirror_part[i]);
         umount2(buf, MNT_DETACH);
     }
 }
@@ -402,6 +410,17 @@ void unlock_blocks() {
 static void rebind_early_to_mirr(){
     char buf[4098];
     char buf2[4098];
+    
+
+    const char *preinit_part[]={
+        "/data/unencrypted", "/data/adb", "/persist", "/metadata", "/cache",
+        nullptr
+    };
+    for (int i=0;preinit_part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "%s/.disable_magisk", MAGISKTMP.data(), preinit_part[i]);
+        if (access(buf, F_OK) == 0) return;
+    }
+
     sprintf(buf, "%s/" MIRRDIR "/early-mount/skip_mount", MAGISKTMP.data());
     if (access(buf, F_OK) == 0) return;
 	
