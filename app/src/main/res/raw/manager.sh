@@ -69,6 +69,7 @@ direct_install() {
 
   rm -f $1/new-boot.img
   fix_env $1
+  install_addond "$3"
   run_migrations
   copy_sepolicy_rules
 
@@ -283,6 +284,35 @@ coreonly(){
 use_full_magisk(){
     [ "$(magisk --path)" == "/system/xbin" ] && return 1
     return 0
+}
+
+
+install_addond(){
+    local installDir="$MAGISKBIN"
+    local AppApkPath="$1"
+    addond=/system/addon.d
+    test ! -d $addond && return
+    ui_print "- Adding addon.d survival script"
+    BLOCKNAME="/dev/block/system_block.$(random_str 5 20)"
+    rm -rf "$BLOCKNAME"
+    if is_rootfs; then
+        mkblknode "$BLOCKNAME" /system
+    else
+        mkblknode "$BLOCKNAME"  /
+    fi
+    blockdev --setrw "$BLOCKNAME"
+    rm -rf "$BLOCKNAME"
+    mount -o rw,remount /
+    mount -o rw,remount /system
+    rm -rf $addond/99-magisk.sh 2>/dev/null
+    rm -rf $addond/magisk 2>/dev/null
+    mkdir -p $addond/magisk
+    cp -prLf "$installDir"/. $addond/magisk || { ui_print "! Failed to install addon.d"; return; }
+    mv $addond/magisk/boot_patch.sh $addond/magisk/boot_patch.sh.in
+    mv $addond/magisk/addon.d.sh $addond/99-magisk.sh
+    cp "$AppApkPath" $addond/magisk/magisk.apk
+    mount -o ro,remount /
+    mount -o ro,remount /system
 }
 
 #############
