@@ -382,7 +382,7 @@ abstract class MagiskInstallImpl protected constructor(
         return true
     }
 
-    private fun flashBoot() = "direct_install $installDir $srcBoot".sh().isSuccess
+    private fun flashBoot() = "direct_install \"$installDir\" \"$srcBoot\" \"$AppApkPath\"".sh().isSuccess
 
     private fun postOTA(): Boolean {
         try {
@@ -418,7 +418,7 @@ abstract class MagiskInstallImpl protected constructor(
 
     protected fun direct() = findImage() && extractFiles() && print_title_delta() && patchBoot() && flashBoot()
 
-    protected fun direct_system() = extractFiles() && "direct_install_system $installDir".sh().isSuccess
+    protected fun direct_system() = extractFiles() && "direct_install_system \"$installDir\"".sh().isSuccess
 
     protected fun secondSlot() =
         findSecondary() && extractFiles() && print_title_delta() && patchBoot() && flashBoot() && postOTA()
