@@ -38,6 +38,7 @@ class InstallViewModel(
 ) : BaseViewModel() {
 
     val isRooted get() = Info.isRooted
+    val allowSystemMagisk = isRooted && Info.allowSystemMagisk
     val hideVbmeta = Info.vbmeta || Info.isSamsung || Info.isAB
     val skipOptions = Info.isEmulator || (Info.isSAR && !Info.isFDE && hideVbmeta && Info.ramdisk)
     val noSecondSlot = !isRooted || !Info.isAB || Info.isEmulator

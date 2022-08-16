@@ -36,6 +36,7 @@ object Info {
     var crypto = ""
     var noDataExec = false
     var isRooted = false
+    var allowSystemMagisk = false
 
     @JvmField var hasGMS = true
     val isSamsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)

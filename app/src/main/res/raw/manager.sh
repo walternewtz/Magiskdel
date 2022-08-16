@@ -286,7 +286,6 @@ use_full_magisk(){
     return 0
 }
 
-
 install_addond(){
     local installDir="$MAGISKBIN"
     local AppApkPath="$1"
@@ -314,6 +313,19 @@ install_addond(){
     mount -o ro,remount /
     mount -o ro,remount /system
 }
+	
+check_system_magisk(){
+    ALLOWSYSTEMINSTALL=true
+    local SYSTEMMODE=false
+    local RUNNING_MAGISK=false
+    if pidof magiskd &>/dev/null && command -v magisk &>/dev/null; then
+       local MAGISKTMP="$(magisk --path)/.magisk" || return
+       getvar SYSTEMMODE
+       RUNNING_MAGISK=true
+    fi
+    [ -z "$SYSTEMMODE" ] && SYSTEMMODE=false
+    $RUNNING_MAGISK && ! $SYSTEMMODE && ALLOWSYSTEMINSTALL=false
+}
 
 #############
 # Initialize
@@ -327,6 +339,7 @@ app_init() {
   run_migrations
   SHA1=$(grep_prop SHA1 $MAGISKTMP/config)
   check_encryption
+  check_system_magisk
 }
 
 export BOOTMODE=true
