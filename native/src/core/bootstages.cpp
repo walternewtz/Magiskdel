@@ -7,6 +7,8 @@
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/vfs.h>
 
 #include <magisk.hpp>
 #include <db.hpp>
@@ -20,6 +22,27 @@
 #define TRIGGER_BL "/dev/.magisk_ztrigger"
 
 #define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
+
+#define TST_RAMFS_MAGIC    0x858458f6
+#define TST_TMPFS_MAGIC    0x01021994
+#define TST_OVERLAYFS_MAGIC 0x794c7630
+
+static bool is_rootfs()
+{
+    const char *path="/";
+    struct statfs s;
+    statfs(path, &s);
+    
+    switch (s.f_type) {
+    case TST_TMPFS_MAGIC:
+    case TST_RAMFS_MAGIC:
+    case TST_OVERLAYFS_MAGIC:
+        return true;
+    default:
+        return false;
+    }
+}
+
 
 static int bind_mount(const char *from, const char *to) {
     int ret = xmount(from, to, nullptr, MS_BIND, nullptr);
@@ -130,33 +153,6 @@ static void recreate_sbin(const char *mirror, bool use_bind_mount) {
                 xsymlink(buf, sbin_path.data());
                 VLOGD("create", buf, sbin_path.data());
             }
-        }
-    }
-}
-
-static void bind_magisk_bins(const char *mirror) {
-    auto dp = xopen_dir(mirror);
-    int src = dirfd(dp.get());
-    char buf[4096];
-    for (dirent *entry; (entry = xreaddir(dp.get()));) {
-        string sbin_path = "/sbin/"s + entry->d_name;
-        struct stat st;
-        fstatat(src, entry->d_name, &st, AT_SYMLINK_NOFOLLOW);
-        if (S_ISLNK(st.st_mode)) {
-            xreadlinkat(src, entry->d_name, buf, sizeof(buf));
-            xsymlink(buf, sbin_path.data());
-            VLOGD("create", buf, sbin_path.data());
-        } else {
-            sprintf(buf, "%s/%s", mirror, entry->d_name);
-            string bufc(buf);
-            if (bufc == MAGISKTMP + "/" INTLROOT) continue;
-            auto mode = st.st_mode & 0777;
-            // Create dummy
-            if (S_ISDIR(st.st_mode))
-                xmkdir(sbin_path.data(), mode);
-            else
-                close(xopen(sbin_path.data(), O_CREAT | O_WRONLY | O_CLOEXEC, mode));
-            bind_mount(buf, sbin_path.data());
         }
     }
 }
@@ -405,6 +401,35 @@ void unlock_blocks() {
     }
 }
 
+
+int mount_sbin(){
+    MAGISKTMP = string("/sbin");
+    if (is_rootfs()){
+        mkdir("/sbin", 0750);
+        if (xmount(nullptr, "/", nullptr, MS_REMOUNT, nullptr) != 0) return -1;
+        rm_rf("/sbin_mirror");
+        mkdir("/sbin_mirror", 0777);
+        clone_attr("/sbin", "/sbin_mirror");
+        link_path("/sbin", "/sbin_mirror");
+        if (tmpfs_mount("tmpfs", "/sbin") != 0) return -1;
+        setfilecon("/sbin", "u:object_r:rootfs:s0");
+        recreate_sbin("/sbin_mirror", true);
+        rm_rf("/sbin_mirror");
+        xmount(nullptr, "/", nullptr, MS_REMOUNT | MS_RDONLY, nullptr);
+    } else {
+        if (tmpfs_mount("tmpfs", "/sbin") != 0) return -1;
+        setfilecon("/sbin", "u:object_r:rootfs:s0");
+        xmkdir("/sbin/.magisk", 0755);
+        tmpfs_mount("tmpfs", "/sbin/.magisk");
+        xmkdir("/sbin/.magisk/block", 0755);
+        xmkdir("/sbin/.magisk/mirror", 0755);
+        mount_mirrors();
+        recreate_sbin("/sbin/.magisk/mirror/system_root/sbin", true);
+        umount2("/sbin/.magisk", MNT_DETACH);
+    }
+    return 0;
+}
+
 #define test_bit(bit, array) (array[bit / 8] & (1 << (bit % 8)))
 
 static void rebind_early_to_mirr(){
@@ -609,31 +634,7 @@ void post_fs_data(int client) {
     rebind_early_to_mirr();
     prune_su_access();
 
-    if (MAGISKTMP != "/sbin" && access("/sbin", F_OK) == 0 && check_envpath("/sbin")){
-        char ROOTMIRROR[512];
-        sprintf(ROOTMIRROR, "%s/" MIRRDIR "/system_root", MAGISKTMP.data());
-        char FAKEBLKDIR[512];
-        sprintf(FAKEBLKDIR, "%s/" BLOCKDIR "/tmpfs", MAGISKTMP.data());
-        if (access(ROOTMIRROR, F_OK) == 0){
-            char SBINMIRROR[1024];
-            sprintf(SBINMIRROR, "%s/sbin", ROOTMIRROR);
-            tmpfs_mount(FAKEBLKDIR, "/sbin");
-            setfilecon("/sbin", "u:object_r:rootfs:s0");
-            recreate_sbin(SBINMIRROR, true);
-        } else {
-            xmount(nullptr, "/", nullptr, MS_REMOUNT, nullptr);
-            rm_rf("/sbin_mirror");
-            mkdir("/sbin_mirror", 0777);
-            clone_attr("/sbin", "/sbin_mirror");
-            link_path("/sbin", "/sbin_mirror");
-            tmpfs_mount(FAKEBLKDIR, "/sbin");
-            setfilecon("/sbin", "u:object_r:rootfs:s0");
-            recreate_sbin("/sbin_mirror", true);
-            rm_rf("/sbin_mirror");
-            xmount(nullptr, "/", nullptr, MS_REMOUNT | MS_RDONLY, nullptr);
-        }
-        bind_magisk_bins(MAGISKTMP.data());
-    }
+    LOGI("Environment PATH=[%s]\n", getenv("PATH"));
 
     if (access(SECURE_DIR, F_OK) != 0) {
         if (SDK_INT < 24) {

@@ -77,6 +77,9 @@ int magisk_main(int argc, char *argv[]) {
     } else if (argv[1] == "--unlock-blocks"sv) {
         unlock_blocks();
         return 0;
+    } else if (argv[1] == "--mount-sbin"sv) {
+        int ret = mount_sbin();
+        return ret;
     } else if (argv[1] == "--early-mount"sv) {
         if (getuid() != 0) return -1;
         const char *tmppath = dirname(argv[0]);
