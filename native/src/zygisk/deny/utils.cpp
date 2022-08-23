@@ -486,15 +486,6 @@ int enable_deny(bool props) {
 
     update_deny_config();
 
-    // Add SafetyNet by default
-    add_hide_set(GMS_PKG, SNET_PROC);
-
-    // We also need to hide the default GMS process if MAGISKTMP != /sbin
-    // The snet process communicates with the main process and get additional info
-    if (MAGISKTMP != "/sbin")
-        add_hide_set(GMS_PKG, GMS_PKG);
-
-
     return DenyResponse::OK;
 }
 

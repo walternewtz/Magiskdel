@@ -685,6 +685,7 @@ void post_fs_data(int client) {
         db_settings dbs;
         get_db_settings(dbs, ZYGISK_CONFIG);
         zygisk_enabled = dbs[ZYGISK_CONFIG];
+        initialize_denylist();
         if (core_only(false)) prepare_modules();
 		else handle_modules();
     }
@@ -726,7 +727,6 @@ void boot_complete(int client) {
     rm_rf(TRIGGER_BL);
     if (safe_mode)
         return;
-    initialize_denylist();
     reset_sensitive_props();
 
     // At this point it's safe to create the folder
