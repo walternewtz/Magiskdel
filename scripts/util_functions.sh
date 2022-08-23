@@ -843,7 +843,7 @@ tr -dc A-Za-z0-9 </dev/urandom | head -c $(($FROM+$(($RANDOM%$(($TO-$FROM+1)))))
 }
 
 magiskrc(){
-local MAGISKTMP="/dev/$(random_str 6 14)"
+local MAGISKTMP="/sbin"
 local SELINUX="$1"
 
 local suexec_seclabel="-"
@@ -861,8 +861,7 @@ cat <<EOF
 on post-fs-data
     start logd
     start adbd
-    mkdir $MAGISKTMP
-    mount tmpfs tmpfs $MAGISKTMP mode=0755
+    exec $suexec_seclabel root root -- $MAGISKSYSTEMDIR/$magisk_name --mount-sbin
     copy $MAGISKSYSTEMDIR/magisk64 $MAGISKTMP/magisk64
     chmod 0755 $MAGISKTMP/magisk64
     symlink ./$magisk_name $MAGISKTMP/magisk
@@ -1077,7 +1076,6 @@ direct_install_system(){
     VENDORDIR="$MIRRORDIR/vendor"
 	
 	if $BOOTMODE; then
-
         # make sure sysmount is clean
         umount -l "$MIRRORDIR" 2>/dev/null
         rm -rf "$MIRRORDIR"
@@ -1093,6 +1091,7 @@ direct_install_system(){
             mkblknode "$MIRRORDIR/block/system_root" /
             mkdir "$ROOTDIR"
             force_mount "$MIRRORDIR/block/system_root" "$ROOTDIR" || return 1
+            mkdir "$MIRRORDIR/block/system_root/sbin"
             ln -fs ./system_root/system "$SYSTEMDIR"
         fi
 

@@ -21,6 +21,7 @@ void reboot();
 void start_log_daemon();
 void setup_logfile(bool reset);
 void early_mount(const char *magisk_tmp);
+int mount_sbin();
 std::string read_certificate(int fd, int version = -1);
 
 // Module stuffs
