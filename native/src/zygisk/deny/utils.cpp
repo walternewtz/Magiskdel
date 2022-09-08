@@ -49,8 +49,6 @@ static pthread_mutex_t data_lock = PTHREAD_MUTEX_INITIALIZER;
 
 atomic<bool> denylist_enforced = false;
 
-atomic<bool> hide_dualspace = false;
-
 atomic<bool> hide_whitelist = false;
 
 extern bool uid_granted_root(int uid);
@@ -365,14 +363,6 @@ static void update_deny_config() {
     db_err(err);
 }
 
-static void update_hide_dualspace_config(){
-    char sql[64];
-    sprintf(sql, "REPLACE INTO settings (key,value) VALUES('%s',%d)",
-        DB_SETTING_KEYS[HIDE_DUALSPACE_CONFIG], hide_dualspace.load());
-    char *err = db_exec(sql);
-    db_err(err);
-}
-
 static void update_whitelist_config(){
     char sql[64];
     sprintf(sql, "REPLACE INTO settings (key,value) VALUES('%s',%d)",
@@ -389,20 +379,6 @@ static int new_daemon_thread(void(*entry)()) {
     return new_daemon_thread(proxy, (void *) entry);
 }
 
-
-int enable_hide_dualspace(){
-	if (hide_dualspace)
-		return DenyResponse::OK;
-	else if (!denylist_enforced)
- 		return DenyResponse:: NOT_ENFORCED;
- 		
-    LOGI("* Enable MagiskHide Dualspace\n");
-
-	hide_dualspace = true;
-    update_hide_dualspace_config();
-	return DenyResponse::OK;
-}
-
 int enable_whitelist(){
     if (hide_whitelist)
         return DenyResponse::OK;
@@ -414,19 +390,6 @@ int enable_whitelist(){
     hide_whitelist = true;
     update_whitelist_config();
     return DenyResponse::OK;
-}
-
-
-int disable_hide_dualspace(){
-	if (!hide_dualspace)
-		return DenyResponse::OK;
-		
- 		
-    LOGI("* Disable MagiskHide Dualspace\n");
-
-	hide_dualspace = false;
-    update_hide_dualspace_config();
-	return DenyResponse::OK;
 }
 
 int disable_whitelist(){
@@ -510,9 +473,6 @@ void initialize_denylist() {
         get_db_settings(dbs, DENYLIST_CONFIG);
         if (dbs[DENYLIST_CONFIG])
             enable_deny(false);
-        get_db_settings(dbs, HIDE_DUALSPACE_CONFIG);
-        if (dbs[HIDE_DUALSPACE_CONFIG])
-            enable_hide_dualspace();
     }
 }
 
@@ -543,8 +503,7 @@ bool is_deny_target(int uid, string_view process, int max_len) {
         return true;
     }
     
-    if ((user_id > 0) && denylist_enforced && hide_dualspace) return true;
-    else if (app_id >= 90000) {
+    if (app_id >= 90000) {
         if (auto it = pkg_to_procs.find(ISOLATED_MAGIC); it != pkg_to_procs.end()) {
             for (const auto &s : it->second) {
                 if (s.length() > max_len && process.length() > max_len && str_starts(s, process))
