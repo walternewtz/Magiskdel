@@ -116,7 +116,6 @@ db_settings::db_settings() {
     data[SU_MULTIUSER_MODE] = MULTIUSER_MODE_OWNER_ONLY;
     data[SU_MNT_NS] = NAMESPACE_MODE_REQUESTER;
     data[DENYLIST_CONFIG] = false;
-    data[HIDE_DUALSPACE_CONFIG] = false;
     data[ZYGISK_CONFIG] = false;
     data[WHITELIST_CONFIG] = false;
     data[ANTI_BOOTLOOP] = true;

@@ -253,7 +253,6 @@ object DenyList : BaseSettingsItem.Toggle() {
                 if (result.isSuccess) {
                     Config.denyList = value
                     DenyListConfig.refresh()
-                    HideDualSpace.refresh()
                     WhiteList.refresh()
                 } else {
                     field = !value
@@ -282,28 +281,6 @@ object AntiBLoop : BaseSettingsItem.Toggle() {
                 }
             }
         }
-}
-
-object HideDualSpace : BaseSettingsItem.Toggle() {
-    override val title = R.string.settings_magiskhide_dualspace_title.asText()
-    override val description get() = R.string.settings_magiskhide_dualspace_summary.asText()
-
-    override var value = Config.hideDualSpace
-        set(value) {
-            field = value
-            val cmd = if (value) "add" else "rm"
-            Shell.cmd("magisk --hide $cmd dualspace").submit { result ->
-                if (result.isSuccess) {
-                    Config.hideDualSpace = value
-                } else {
-                    field = !value
-                    notifyPropertyChanged(BR.checked)
-                }
-            }
-        }    
-    override fun refresh() {
-        isEnabled = Config.denyList && ! Config.whiteList
-    }
 }
 
 object CoreOnly : BaseSettingsItem.Toggle() {
@@ -338,7 +315,6 @@ object WhiteList : BaseSettingsItem.Toggle() {
             Shell.cmd("magisk --hide $cmd").submit { result ->
                 if (result.isSuccess) {
                     Config.whiteList = value
-                    HideDualSpace.refresh()
                     WhiteList.refresh()
                 } else {
                     field = !value

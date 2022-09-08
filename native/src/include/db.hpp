@@ -40,7 +40,6 @@ constexpr const char *DB_SETTING_KEYS[] = {
     "mnt_ns",
     "hide",
     "zygisk",
-    "hide_dualspace",
     "hide_whitelist",
     "anti_bootloop"
 };
@@ -52,7 +51,6 @@ enum {
     SU_MNT_NS,
     DENYLIST_CONFIG,
     ZYGISK_CONFIG,
-    HIDE_DUALSPACE_CONFIG,
     WHITELIST_CONFIG,
     ANTI_BOOTLOOP
 };
