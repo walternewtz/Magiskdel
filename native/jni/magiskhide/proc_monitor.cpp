@@ -181,39 +181,90 @@ static void detach_pid(int pid, int signal = 0) {
     PTRACE_LOG("detach\n");
 }
 
-static bool check_pid(int pid) {
+static bool check_pid(long pid) {
     char path[128];
     char cmdline[1024];
+    char context[1024];
     struct stat st;
-
     sprintf(path, "/proc/%d", pid);
     if (stat(path, &st)) {
         // Process died unexpectedly, ignore
-        detach_pid(pid);
         return true;
     }
-
     int uid = st.st_uid;
-
-    // UID hasn't changed
-    if (uid == 0)
-        return false;
+    // check context to know zygote is being forked into app process
+    sprintf(path, "/proc/%d/attr/current", pid);
+    if (auto f = open_file(path, "re")) {
+        fgets(context, sizeof(context), f.get());
+    } else {
+        // Process died unexpectedly, ignore
+        return true;
+    }
 
     sprintf(path, "/proc/%d/cmdline", pid);
     if (auto f = open_file(path, "re")) {
         fgets(cmdline, sizeof(cmdline), f.get());
     } else {
         // Process died unexpectedly, ignore
-        detach_pid(pid);
         return true;
     }
+
+    // if cmdline == zygote and context is changed, zygote is being forked into app process
+    if ((cmdline == "zygote"sv || cmdline == "zygote32"sv || cmdline == "zygote64"sv) && context != "u:r:zygote:s0"sv){
+        // this is pre-initialized app zygote
+        if (strstr(context, "u:r:app_zygote:s0"))
+            goto check_and_hide;
+
+        // wait until pre-initialized
+        for (int i=0; cmdline != "<pre-initialized>"sv; i++) {
+            if (i>=300000) return true; // we don't want it stuck forever
+            // update cmdline
+            if (auto f = open_file(path, "re")) {
+                fgets(cmdline, sizeof(cmdline), f.get());
+            } else {
+                // Process died unexpectedly, ignore
+                return true;
+            }
+            usleep(10);
+        }
+    }
+
+check_and_hide:
+    
+    // UID hasn't changed
+    if (uid == 0)
+        return false;
 
     if (cmdline == "zygote"sv || cmdline == "zygote32"sv || cmdline == "zygote64"sv ||
         cmdline == "usap32"sv || cmdline == "usap64"sv)
         return false;
 
+    // app process is being initialized
+    // it should happen in short time
+    for (int i=0;cmdline == "<pre-initialized>"sv; i++) {
+        if (i>=300000) goto not_target; // we don't want it stuck forever
+        if (auto f = open_file(path, "re")) {
+            fgets(cmdline, sizeof(cmdline), f.get());
+        } else {
+            // Process died unexpectedly, ignore
+            return true;
+        }
+        usleep(10);
+    }
+
+    // read process name again to make sure
+    if (auto f = open_file(path, "re")) {
+        fgets(cmdline, sizeof(cmdline), f.get());
+    } else {
+        // Process died unexpectedly, ignore
+        return true;
+    }
+
+    // stop app process as soon as possible and do check if this process is target or not
+    kill(pid, SIGSTOP);
+
     if (!is_hide_target(uid, cmdline, 95))
-        goto not_target;
+            goto not_target;
 
     // Ensure ns is separated
     read_ns(pid, &st);
@@ -221,21 +272,27 @@ static bool check_pid(int pid) {
         if (zit.second.st_ino == st.st_ino &&
             zit.second.st_dev == st.st_dev) {
             // ns not separated, abort
+            // Android 11+, all zygote child will have seperated ns, so this should not happen
             LOGW("proc_monitor: skip [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
             goto not_target;
         }
     }
 
+    // Finally this is our target
     // Detach but the process should still remain stopped
     // The hide daemon will resume the process after hiding it
+    // Note that we are now in "PTRACE_EVENT stop", not "signal-delivery-stop",
+    // signal injection (PTRACE_restart with signal) may simply be ignored, so use kill() instead
     LOGI("proc_monitor: [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
-    detach_pid(pid, SIGSTOP);
-    hide_daemon(pid);
+    hide_unmount(pid);
+    detach_pid(pid);
+    kill(pid, SIGCONT);
     return true;
 
 not_target:
-    PTRACE_LOG("[%s] is not our target\n", cmdline);
+    //LOGD("proc_monitor: [%s] is not our target\n", cmdline);
     detach_pid(pid);
+    kill(pid, SIGCONT);
     return true;
 }
 
@@ -279,6 +336,20 @@ static void new_zygote(int pid) {
     xptrace(PTRACE_SETOPTIONS, pid, nullptr,
             PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACEEXIT);
     xptrace(PTRACE_CONT, pid);
+}
+
+void do_check_fork(long pid) {
+    if (fork_dont_care() == 0) {
+        int i=0;
+        // zygote child process need a mount of time to seperate mount namespace
+        while (!check_pid(pid)){
+            if (i>=300000) break;
+            i++;
+            usleep(10);
+        }
+        detach_pid(pid);
+        _exit(0);
+    }
 }
 
 #define DETACH_AND_CONT { detach_pid(pid); continue; }
@@ -360,6 +431,7 @@ void proc_monitor() {
                     case PTRACE_EVENT_VFORK:
                         PTRACE_LOG("zygote forked: [%lu]\n", msg);
                         attaches[msg] = true;
+                        do_check_fork(msg);
                         break;
                     case PTRACE_EVENT_EXIT:
                         PTRACE_LOG("zygote exited with status: [%lu]\n", msg);
@@ -372,8 +444,7 @@ void proc_monitor() {
                 switch (event) {
                     case PTRACE_EVENT_CLONE:
                         PTRACE_LOG("create new threads: [%lu]\n", msg);
-                        if (attaches[pid] && check_pid(pid))
-                            continue;
+                        // do nothing
                         break;
                     case PTRACE_EVENT_EXEC:
                     case PTRACE_EVENT_EXIT:
