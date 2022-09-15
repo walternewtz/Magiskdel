@@ -54,6 +54,8 @@ extern bool uid_granted_root(int uid);
 // Process monitoring
 pthread_t monitor_thread;
 void proc_monitor();
+int pipe_pid = 0;
+int logcat_pid = 0;
 
 #define do_kill (denylist_enforced)
 
@@ -126,6 +128,22 @@ void crawl_procfs(const std::function<bool(int)> &fn) {
     }
 }
 
+static int parse_ppid(int pid) {
+    char path[32];
+    int ppid;
+
+    sprintf(path, "/proc/%d/stat", pid);
+
+    auto stat = open_file(path, "re");
+    if (!stat)
+        return -1;
+
+    // PID COMM STATE PPID .....
+    fscanf(stat.get(), "%*d %*s %*c %d", &ppid);
+
+    return ppid;
+}
+
 static inline bool str_eql(string_view a, string_view b) { return a == b; }
 
 template<bool str_op(string_view, string_view) = &str_eql>
@@ -164,6 +182,26 @@ static void kill_process(const char *name, bool multi = false) {
         }
         return true;
     });
+}
+
+static void kill_children(int ppid){
+    crawl_procfs([=](int pid) -> bool {
+        if (parse_ppid(pid) == ppid) {
+            kill(pid, SIGKILL);
+            LOGD("hide_daemon: kill PID=[%d]\n", pid);
+        }
+        return true;
+    });
+}
+
+static void kill_logcat_pipe(){
+	if (pipe_pid) {
+        // kill logcat
+        kill_children(pipe_pid);
+        kill(pipe_pid, SIGKILL);
+        pipe_pid = 0;
+        logcat_pid = 0;
+    }
 }
 
 static bool validate(const char *pkg, const char *proc) {
@@ -422,6 +460,7 @@ int enable_deny(bool props) {
             return DenyResponse::ERROR;
         }
         if (!zygisk_enabled) {
+            kill_logcat_pipe();
             auto ret1 = new_daemon_thread(&proc_monitor);
             if (ret1){
                 // cannot start monitor_proc, return daemon error
@@ -446,10 +485,10 @@ int disable_deny() {
     if (denylist_enforced) {
         denylist_enforced = false;
         LOGI("* Disable MagiskHide\n");
-    }
+    } else return DenyResponse::OK;
     if (!zygisk_enabled) {
            pthread_kill(monitor_thread, SIGTERMTHRD);
-           kill_process("/system/bin/logcat", true);
+           kill_logcat_pipe();
     }
     update_deny_config();
 
@@ -484,7 +523,6 @@ bool is_deny_target(int uid, string_view process, int max_len) {
         rescan_apps();
 
     int app_id = to_app_id(uid);
-    int user_id = to_user_id(uid);
     int manager_app_id = get_manager();
     
     if (denylist_enforced && hide_whitelist){
@@ -634,22 +672,6 @@ static inline int read_ns(const int pid, struct stat *st) {
     return stat(path, st);
 }
 
-static int parse_ppid(int pid) {
-    char path[32];
-    int ppid;
-
-    sprintf(path, "/proc/%d/stat", pid);
-
-    auto stat = open_file(path, "re");
-    if (!stat)
-        return -1;
-
-    // PID COMM STATE PPID .....
-    fscanf(stat.get(), "%*d %*s %*c %d", &ppid);
-
-    return ppid;
-}
-
 static bool is_zygote_done() {
 #ifdef __LP64__
     return zygote_map.size() >= 2;
@@ -676,6 +698,14 @@ static void check_zygote() {
         itimerval interval { .it_interval = val, .it_value = val };
         setitimer(ITIMER_REAL, &interval, nullptr);
     }
+}
+
+static void check_logcat_pid() {
+    crawl_procfs([](int pid) -> bool {
+        if (parse_ppid(pid) == pipe_pid)
+            logcat_pid = pid;
+        return true;
+    });
 }
 
 #define APP_PROC "/system/bin/app_process"
@@ -884,9 +914,9 @@ void do_check_fork(int pid) {
 }
 
 static bool is_zygote_process(int pid) {
-	char path[128];
+    char path[128];
     char buf[1024];
-	sprintf(path, "/proc/%d/cmdline", pid);
+    sprintf(path, "/proc/%d/cmdline", pid);
     FILE *fprocess = fopen(path, "re");
     if (!fprocess) return false;
     fscanf(fprocess, "%s", buf);
@@ -938,19 +968,37 @@ void proc_monitor() {
         setitimer(ITIMER_REAL, &interval, nullptr);
     }
 
-    system("/system/bin/logcat -b all -c");
-    FILE *fp = popen("/system/bin/logcat Zygote:* *:S Magisk:S" , "r+");
+    FILE *fp = popen("echo \"PID=$$\"; /system/bin/logcat -b all -c; /system/bin/logcat Zygote:* *:S" , "r+");
     // open logcat process and watch out zygote fork
     // this way is very less effective because you can only know zygote fork event
     // if logcat is killed (killall logcat), proc_monitor will be stuck, magiskhide need to re-enabled!
-    fprintf(fp, "");
+    fscanf(fp, "PID=%d", &pipe_pid);
+    usleep(500000);
+    check_logcat_pid();
+    LOGD("proc_monitor: logcat running PID=[%d] PPID=[%d]\n", logcat_pid, pipe_pid);
     char buf[4098];
     char log_pid[10];
     char pid[10];
     if (fp){
-        LOGI("proc_monitor: running\n");
         while (1){
             pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+            sprintf(buf, "/proc/%d/cmdline", logcat_pid);
+            auto ftest = open_file(buf, "r");
+            if (!ftest) {
+               LOGD("proc_monitor: logcat died PID=[%d]\n", logcat_pid);
+               kill_children(pipe_pid);
+               kill(pipe_pid, SIGKILL);
+               pipe_pid = 0;
+               logcat_pid = 0;
+               sleep(1);
+               if (fp) pclose(fp);
+               fp = popen("echo \"PID=$$\"; /system/bin/logcat -b all -c; /system/bin/logcat Zygote:* *:S" , "r+");
+               fscanf(fp, "PID=%d", &pipe_pid);
+               usleep(500000);
+               check_logcat_pid();
+               LOGD("proc_monitor: logcat running PID=[%d] PPID=[%d]\n", logcat_pid, pipe_pid);
+               continue;
+            }
             fgets(buf, sizeof(buf), fp);
             // filter logcat to know if zygote fork new process
             if (!strstr(buf, "Forked child process") && !strstr(buf, "Calling ZygoteHooks.beginPreload()")) continue;
