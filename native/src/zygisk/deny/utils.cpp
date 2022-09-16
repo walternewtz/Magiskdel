@@ -54,6 +54,7 @@ extern bool uid_granted_root(int uid);
 // Process monitoring
 pthread_t monitor_thread;
 void proc_monitor();
+FILE *pipe_fp = NULL;
 
 #define do_kill (denylist_enforced)
 
@@ -399,6 +400,7 @@ int disable_whitelist(){
 
 
 int enable_deny(bool props) {
+    string logcat_dir = MAGISKTMP + "/" INTLROOT "/logcat";
     if (denylist_enforced) {
         return DenyResponse::OK;
     } else {
@@ -422,6 +424,8 @@ int enable_deny(bool props) {
             return DenyResponse::ERROR;
         }
         if (!zygisk_enabled) {
+            rm_rf(logcat_dir.data());
+            xsymlink("/system/bin/logcat", logcat_dir.data());
             auto ret1 = new_daemon_thread(&proc_monitor);
             if (ret1){
                 // cannot start monitor_proc, return daemon error
@@ -443,13 +447,14 @@ int enable_deny(bool props) {
 }
 
 int disable_deny() {
+    string logcat_dir = MAGISKTMP + "/" INTLROOT "/logcat";
     if (denylist_enforced) {
         denylist_enforced = false;
         LOGI("* Disable MagiskHide\n");
     }
     if (!zygisk_enabled) {
+           kill_process(logcat_dir.data(), true);
            pthread_kill(monitor_thread, SIGTERMTHRD);
-           kill_process("/system/bin/logcat", true);
     }
     update_deny_config();
 
@@ -650,6 +655,23 @@ static int parse_ppid(int pid) {
     return ppid;
 }
 
+static bool zombie_pid(int pid) {
+    char path[32];
+    char status;
+
+    sprintf(path, "/proc/%d/stat", pid);
+
+    auto stat = open_file(path, "re");
+    if (!stat)
+        return true;
+
+    // PID COMM STATE PPID .....
+    fscanf(stat.get(), "%*d %*s %c %*d", &status);
+
+    if (status == 'Z') return true;
+    return false;
+}
+
 static bool is_zygote_done() {
 #ifdef __LP64__
     return zygote_map.size() >= 2;
@@ -736,6 +758,8 @@ static void term_thread(int) {
     sigaction(SIGIO, &act, nullptr);
     sigaction(SIGALRM, &act, nullptr);
     LOGD("proc_monitor: terminate\n");
+    if (pipe_fp) pclose(pipe_fp);
+    pipe_fp = NULL;
     pthread_exit(nullptr);
 }
 
@@ -884,9 +908,9 @@ void do_check_fork(int pid) {
 }
 
 static bool is_zygote_process(int pid) {
-	char path[128];
+    char path[128];
     char buf[1024];
-	sprintf(path, "/proc/%d/cmdline", pid);
+    sprintf(path, "/proc/%d/cmdline", pid);
     FILE *fprocess = fopen(path, "re");
     if (!fprocess) return false;
     fscanf(fprocess, "%s", buf);
@@ -938,20 +962,36 @@ void proc_monitor() {
         setitimer(ITIMER_REAL, &interval, nullptr);
     }
 
-    system("/system/bin/logcat -b all -c");
-    FILE *fp = popen("/system/bin/logcat Zygote:* *:S Magisk:S" , "r+");
+    int pipe_pid = 0;
+    string logcat_dir = MAGISKTMP + "/" INTLROOT "/logcat";
+    char logcat_cmd[128];
+    sprintf(logcat_cmd, "echo \"PID=$$\"; %s -b all -c; %s Zygote:* *:S Magisk:S", logcat_dir.data(), logcat_dir.data());
+    pipe_fp = popen(logcat_cmd , "r");
+    fscanf(pipe_fp, "PID=%d", &pipe_pid);
     // open logcat process and watch out zygote fork
     // this way is very less effective because you can only know zygote fork event
     // if logcat is killed (killall logcat), proc_monitor will be stuck, magiskhide need to re-enabled!
-    fprintf(fp, "");
     char buf[4098];
     char log_pid[10];
     char pid[10];
-    if (fp){
-        LOGI("proc_monitor: running\n");
+    if (pipe_fp){
+        LOGD("proc_monitor: new pipe PID=[%d]\n", pipe_pid);
         while (1){
             pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
-            fgets(buf, sizeof(buf), fp);
+            // check if pipe is dead, maybe logd is off?
+            if (zombie_pid(pipe_pid)){
+                sleep(1);
+                LOGD("proc_monitor: pipe dead PID=[%d]\n", pipe_pid);
+                // close pipe
+                if (pipe_fp) pclose(pipe_fp); 
+                // open new pipe
+                pipe_fp = popen(logcat_cmd, "r");
+                // get pid of pipe
+                fscanf(pipe_fp, "PID=%d", &pipe_pid);
+                LOGD("proc_monitor: new pipe PID=[%d]\n", pipe_pid);
+                continue;
+            }
+            fgets(buf, sizeof(buf), pipe_fp);
             // filter logcat to know if zygote fork new process
             if (!strstr(buf, "Forked child process") && !strstr(buf, "Calling ZygoteHooks.beginPreload()")) continue;
             // new zygote
@@ -971,6 +1011,7 @@ void proc_monitor() {
             // fork new process, check pid and do revert unmount
             do_check_fork(atoi(pid));
         }
-        fclose(fp);
+        pclose(pipe_fp);
+        pipe_fp = NULL;
     }
 }
