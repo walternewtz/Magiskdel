@@ -60,19 +60,12 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
 
         // Magisk
         if (Info.env.isActive) {
-            val is_delta = Shell.cmd("is_delta").exec().isSuccess;
-            val use_full_magisk = Shell.cmd("use_full_magisk").exec().isSuccess;
-            if (use_full_magisk){
-                list.addAll(listOf(
-                    Magisk,
-                    SystemlessHosts
-                ))
-                if (Const.Version.atLeast_24_0()) {
-                    list.add(Zygisk)
-                    if (is_delta){
-                        list.addAll(listOf(AntiBLoop, CoreOnly, MagiskHideClass, DenyList, WhiteList, DenyListConfig))
-                    }
-                }
+            list.addAll(listOf(
+                Magisk,
+                SystemlessHosts
+            ))
+            if (Const.Version.atLeast_24_0()) {
+                list.addAll(listOf(AntiBLoop, CoreOnly, Zygisk, MagiskHideClass, DenyList, WhiteList, DenyListConfig))
             }
         }
 
