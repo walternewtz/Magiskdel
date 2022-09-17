@@ -725,9 +725,9 @@ void boot_complete(int client) {
 
     LOGI("** boot-complete triggered\n");
     rm_rf(TRIGGER_BL);
+    reset_sensitive_props();
     if (safe_mode)
         return;
-    reset_sensitive_props();
 
     // At this point it's safe to create the folder
     if (access(SECURE_DIR, F_OK) != 0)
