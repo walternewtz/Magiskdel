@@ -34,6 +34,10 @@ constexpr char MAGISK_RC[] =
 
 "on property:sys.boot_completed=1\n"
 "    exec %1$s/magisk --boot-complete\n"
+"    exec u:r:" SEPOL_PROC_DOMAIN ":s0 root root -- %1$s/magisk resetprop --delete init.svc.%2$s\n"
+"    exec u:r:" SEPOL_PROC_DOMAIN ":s0 root root -- %1$s/magisk resetprop --delete init.svc.%3$s\n"
+"    exec u:r:" SEPOL_PROC_DOMAIN ":s0 root root -- %1$s/magisk resetprop --delete init.svc_debug_pid.%2$s\n"
+"    exec u:r:" SEPOL_PROC_DOMAIN ":s0 root root -- %1$s/magisk resetprop --delete init.svc_debug_pid.%3$s\n"
 "\n"
 
 "on property:init.svc.zygote=restarting\n"
