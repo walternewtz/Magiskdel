@@ -1,4 +1,6 @@
 #include <sys/mount.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <magisk.hpp>
 #include <base.hpp>
@@ -16,7 +18,15 @@ static void lazy_unmount(const char* mountpoint) {
 
 #define TMPFS_MNT(dir) (mentry->mnt_type == "tmpfs"sv && str_starts(mentry->mnt_dir, "/" #dir))
 
-void revert_unmount(int pid) {
+void revert_daemon(int pid, int client) {
+    if (fork_dont_care() == 0) {
+        revert_unmount(pid);
+        write_int(client, 0);
+        _exit(0);
+    }
+}
+
+void revert_unmount(int pid){
     if (pid > 0) {
         if (switch_mnt_ns(pid))
             return;

@@ -495,11 +495,11 @@ bool is_deny_target(int uid, string_view process, int max_len) {
         rescan_apps();
 
     int app_id = to_app_id(uid);
-    int user_id = to_user_id(uid);
     int manager_app_id = get_manager();
     
     if (denylist_enforced && hide_whitelist){
-    if (uid_granted_root(uid) || (to_app_id(uid) == manager_app_id) || (app_id == 0) || (uid < 10000)) return false;
+        if (uid_granted_root(uid) || (to_app_id(uid) == manager_app_id) || (app_id == 0) || (uid < 10000))
+            return false;
         return true;
     }
     

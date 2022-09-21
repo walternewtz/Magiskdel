@@ -157,12 +157,13 @@ DCL_HOOK_FUNC(int, fork) {
 
 // Unmount stuffs in the process's private mount namespace
 DCL_HOOK_FUNC(int, unshare, int flags) {
-    int res = old_unshare(flags);
+    int res = old_unshare(flags); 
     if (g_ctx && (flags & CLONE_NEWNS) != 0 && res == 0) {
         if (g_ctx->flags[DO_HIDE]) {
+            remote_request_unmount();
             cleanup_preload();
-        }
-        if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
+        } else if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
+            LOGD("denylist: do revert unmount (%s)\n", g_ctx->process);
             revert_unmount();
         } else {
             umount2("/system/bin/app_process64", MNT_DETACH);
@@ -538,7 +539,6 @@ void HookContext::nativeSpecializeAppProcess_pre() {
     int fd = remote_get_info(args.app->uid, process, &info_flags, module_fds);
     if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
         ZLOGI("[%s] is on the hidelist\n", process);
-        flags[DO_REVERT_UNMOUNT] = true;
         run_modules_pre(module_fds);
         flags[DO_HIDE] = true; // Cannot hide zygisk at the momment
         // Ensure separated namespace, allow denylist to handle isolated process before Android 11
@@ -653,9 +653,6 @@ void HookContext::fork_pre() {
     g_ctx = this;
     sigmask(SIG_BLOCK, SIGCHLD);
     pid = old_fork();
-    if (g_ctx->flags[DO_HIDE]) {
-        unload_zygisk();
-    }
 }
 
 // Unblock SIGCHLD in case the original method didn't

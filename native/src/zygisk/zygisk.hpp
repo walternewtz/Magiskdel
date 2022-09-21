@@ -18,6 +18,7 @@ enum : int {
     CONNECT_COMPANION,
     GET_MODDIR,
     PASSTHROUGH,
+    DO_UNMOUNT,
     END
 };
 }
@@ -60,3 +61,5 @@ inline int zygisk_request(int req) {
     write_int(fd, req);
     return fd;
 }
+
+int remote_request_unmount();
