@@ -14,6 +14,9 @@
 
 MAGISKBIN=/data/adb/magisk
 MAGISKTMPDIR=/tmp/magisk
+[ -z "$S" ] && S=/system
+ADDOND="$S/addon.d"
+APK="$S/addon.d/magisk/magisk.apk"
 
 V1_FUNCS=/tmp/backuptool.functions
 V2_FUNCS=/postinstall/tmp/backuptool.functions
@@ -128,7 +131,7 @@ case "$1" in
   backup)
     rm -rf "$MAGISKTMPDIR"
     mkdir -p "$MAGISKTMPDIR"
-    cp -af /system/addon.d/magisk/* "$MAGISKTMPDIR"
+    cp -af "$ADDOND/magisk/"* "$MAGISKTMPDIR"
     mv "$MAGISKTMPDIR/boot_patch.sh.in" "$MAGISKTMPDIR/boot_patch.sh"
   ;;
   restore)
