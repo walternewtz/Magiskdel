@@ -61,20 +61,20 @@ static void patch_init_rc(const char *src, const char *dest, const char *tmp_dir
     clone_attr(src, dest);
 }
 
-static void load_overlay_rc(const char *overlay) {
+static void load_overlay_rc(const char *overlay, bool should_unlink = true) {
     auto dir = open_dir(overlay);
     if (!dir) return;
 
     int dfd = dirfd(dir.get());
     // Do not allow overwrite init.rc
-    unlinkat(dfd, "init.rc", 0);
+    if (should_unlink) unlinkat(dfd, "init.rc", 0);
     for (dirent *entry; (entry = xreaddir(dir.get()));) {
         if (str_ends(entry->d_name, ".rc")) {
             LOGD("Found rc script [%s]\n", entry->d_name);
             int rc = xopenat(dfd, entry->d_name, O_RDONLY | O_CLOEXEC);
             rc_list.push_back(full_read(rc));
             close(rc);
-            unlinkat(dfd, entry->d_name, 0);
+            if (should_unlink) unlinkat(dfd, entry->d_name, 0);
         }
     }
 }
@@ -226,6 +226,7 @@ void SARBase::patch_ro_root() {
     restore_folder(ROOTOVL, overlays);
     overlays.clear();
     load_overlay_rc(ROOTOVL);
+    load_overlay_rc(MIRRDIR "/early-mount/initrc.d", false);
     if (access(ROOTOVL "/sbin", F_OK) == 0) {
         // Move files in overlay.d/sbin into tmp_dir
         mv_path(ROOTOVL "/sbin", ".");
@@ -283,9 +284,6 @@ void MagiskInit::patch_rw_root() {
     }
     rm_rf("/.backup");
 
-    // Patch init.rc
-    patch_init_rc("/init.rc", "/init.p.rc", "/sbin");
-    rename("/init.p.rc", "/init.rc");
 
     bool treble;
     {
@@ -295,6 +293,14 @@ void MagiskInit::patch_rw_root() {
 
     xmkdir(PRE_TMPDIR, 0);
     setup_tmp(PRE_TMPDIR);
+
+    // Handle custom rc script
+    load_overlay_rc(PRE_TMPDIR "/" MIRRDIR "/early-mount/initrc.d", false);
+
+    // Patch init.rc
+    patch_init_rc("/init.rc", "/init.p.rc", "/sbin");
+    rename("/init.p.rc", "/init.rc");
+
     chdir(PRE_TMPDIR);
 
     // Extract magisk

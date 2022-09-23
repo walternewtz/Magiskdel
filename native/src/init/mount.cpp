@@ -247,6 +247,7 @@ success:
     strcpy(p, "/early-mount");
     full_early_dir = mirrpath + custom_early_dir;
     xmkdir(full_early_dir.data(), 0755);
+    xmkdir(string(full_early_dir + "/initrc.d").data(), 0755);
     custom_early_dir = "."s + custom_early_dir;
     xsymlink(custom_early_dir.data(), path);
 
@@ -433,8 +434,10 @@ void MagiskInit::setup_tmp(const char *path) {
     xmkdir(INTLROOT, 0755);
     xmkdir(MIRRDIR, 0);
     xmkdir(BLOCKDIR, 0);
+    xmkdir(INTLROOT "/early-mount.d", 0755);
 
     mount_rules_dir();
+    xmount(MIRRDIR "/early-mount", INTLROOT "/early-mount.d", nullptr, MS_BIND, nullptr);
     early_mount(path);
 
     int fd = xopen(INTLROOT "/config", O_WRONLY | O_CREAT, 0);
