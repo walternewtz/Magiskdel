@@ -7,10 +7,6 @@
 constexpr char MAGISK_RC[] =
 "\n"
 
-"on early-init\n"
-"    exec u:r:" SEPOL_PROC_DOMAIN ":s0 root root -- %1$s/magisk --early-mount\n"
-"\n"
-
 "on post-fs-data\n"
 "    start logd\n"
 "    rm " UNBLOCKFILE "\n"

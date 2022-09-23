@@ -1,6 +1,7 @@
 #include <sys/mount.h>
 #include <sys/sysmacros.h>
 #include <libgen.h>
+#include <unistd.h>
 
 #include <base.hpp>
 #include <selinux.hpp>
@@ -135,8 +136,8 @@ void MagiskInit::mount_rules_dir() {
     auto do_mount = [&](const char *type) -> bool {
         xmkdir(path, 0755);
         bool success = xmount(blk_info.block_dev, path, type, 0, nullptr) == 0;
-//        if (success)
-//            mount_list.emplace_back(path);
+        if (success)
+            mount_list.emplace_back(path);
         return success;
     };
 
@@ -356,6 +357,73 @@ void BaseInit::exec_init() {
     exit(1);
 }
 
+
+static bool system_lnk(const char *path){
+    char buff[4098];
+    ssize_t len = readlink(path, buff, sizeof(buff)-1);
+    if (len != -1) {
+        return true;
+    }
+    return false;
+}
+
+
+static void simple_mount(const string &sdir, const string &ddir = "") {
+    auto dir = xopen_dir(sdir.data());
+    if (!dir) return;
+    for (dirent *entry; (entry = xreaddir(dir.get()));) {
+        string src = sdir + "/" + entry->d_name;
+        string dest = ddir + "/" + entry->d_name;
+        if (access(dest.data(), F_OK) == 0 && !system_lnk(dest.data())) {
+        	if (entry->d_type == DT_LNK) continue;
+            else if (entry->d_type == DT_DIR) {
+                // Recursive
+                simple_mount(src, dest);
+            } else {
+                LOGD("bind_mnt: %s <- %s\n", dest.data(), src.data());
+                xmount(src.data(), dest.data(), nullptr, MS_BIND, nullptr);
+            }
+        }
+    }
+}
+
+
+void early_mount(const char *magisk_tmp){
+    LOGI("** early-mount start\n");
+    char buf[4098];
+    char buff[4098];
+    const char *part[]={
+        "/vendor", "/product", "/system_ext",
+        nullptr
+    };
+
+    const char *preinit_part[]={
+        "/data/unencrypted", "/data/adb", "/persist", "/metadata", "/cache",
+        nullptr
+    };
+    for (int i=0;preinit_part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "%s/.disable_magisk", magisk_tmp, preinit_part[i]);
+        if (access(buf, F_OK) == 0) return;
+    }
+
+    sprintf(buf, "%s/" MIRRDIR "/early-mount", magisk_tmp);
+    fsetfilecon(xopen(buf, O_RDONLY | O_CLOEXEC), "u:object_r:system_file:s0");
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/skip_mount", magisk_tmp);
+    if (access(buf, F_OK) == 0) return;
+
+    // SYSTEM
+    sprintf(buf, "%s/" MIRRDIR "/early-mount/system", magisk_tmp);
+    if (access(buf, F_OK) == 0)
+    	simple_mount(buf, "/system");
+
+    // VENDOR, PRODUCT, SYSTEM_EXT
+    for (int i=0;part[i];i++) {
+        sprintf(buf, "%s/" MIRRDIR "/early-mount/system%s", magisk_tmp, part[i]);
+        if (access(buf, F_OK) == 0 && !system_lnk(part[i]))
+            simple_mount(buf, part[i]);
+    }
+}
+
 void MagiskInit::setup_tmp(const char *path) {
     LOGD("Setup Magisk tmp at %s\n", path);
     xmount("tmpfs", path, "tmpfs", 0, "mode=755");
@@ -367,6 +435,7 @@ void MagiskInit::setup_tmp(const char *path) {
     xmkdir(BLOCKDIR, 0);
 
     mount_rules_dir();
+    early_mount(path);
 
     int fd = xopen(INTLROOT "/config", O_WRONLY | O_CREAT, 0);
     xwrite(fd, magisk_cfg.buf, magisk_cfg.sz);

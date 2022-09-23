@@ -336,52 +336,6 @@ static void simple_mount(const string &sdir, const string &ddir = "") {
     }
 }
 
-
-void early_mount(const char *magisk_tmp){
-    LOGI("** early-mount start\n");
-    char buf[4098];
-    const char *part[]={
-        "/vendor", "/product", "/system_ext",
-        nullptr
-    };
-
-    const char *preinit_part[]={
-        "/data/unencrypted", "/data/adb", "/persist", "/metadata", "/cache",
-        nullptr
-    };
-    for (int i=0;preinit_part[i];i++) {
-        sprintf(buf, "%s/" MIRRDIR "%s/.disable_magisk", magisk_tmp, preinit_part[i]);
-        if (access(buf, F_OK) == 0) goto finish;
-    }
-
-    sprintf(buf, "%s/" MIRRDIR "/early-mount", magisk_tmp);
-    fsetfilecon(xopen(buf, O_RDONLY | O_CLOEXEC), "u:object_r:system_file:s0");
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/skip_mount", magisk_tmp);
-    if (access(buf, F_OK) == 0) goto finish;
-
-    // SYSTEM
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system", magisk_tmp);
-    if (access(buf, F_OK) == 0)
-    	simple_mount(buf, "/system");
-
-    // VENDOR, PRODUCT, SYSTEM_EXT
-    for (int i=0;part[i];i++) {
-        sprintf(buf, "%s/" MIRRDIR "/early-mount/system%s", magisk_tmp, part[i]);
-        if (access(buf, F_OK) == 0 && !system_lnk(part[i]))
-            simple_mount(buf, part[i]);
-    }
-
-finish:
-    const char *mirror_part[]={
-        "/data", "/persist", "/metadata", "/cache",
-        nullptr
-    };
-    for (int i=0;mirror_part[i];i++) {
-        sprintf(buf, "%s/" MIRRDIR "%s", magisk_tmp, mirror_part[i]);
-        umount2(buf, MNT_DETACH);
-    }
-}
-
 void unlock_blocks() {
     int fd, dev, OFF = 0;
 
