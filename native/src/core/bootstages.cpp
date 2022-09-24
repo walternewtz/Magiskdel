@@ -507,6 +507,7 @@ static void __tune_f2fs(const char *dir, const char *device, const char *node,
     int flags = F_OK | R_OK | W_OK;
 
     sprintf(path, "%s/%s/%s", dir, device, node);
+    chmod(path, 0644);
 
     if (wr_only)
         flags &= ~R_OK;
@@ -525,7 +526,7 @@ static void __tune_f2fs(const char *dir, const char *device, const char *node,
         if (strncmp(buf, def, len)) {
             // Something else changed this node from the kernel's default.
             // Pass.
-            LOGI("node %s unnecessary for tuning\n", node);
+            LOGD("tune_f2fs: skip node %s\n", node);
             close(fd);
             return;
         }
@@ -534,7 +535,7 @@ static void __tune_f2fs(const char *dir, const char *device, const char *node,
     xwrite(fd, val, strlen(val));
     close(fd);
 
-    LOGI("node %s tuned to %s\n", path, val);
+    LOGD("tune_f2fs: %s -> %s\n", path, val);
 }
 
 static void tune_f2fs() {
@@ -544,11 +545,10 @@ static void tune_f2fs() {
     else if (access("/sys/fs/f2fs_dev", F_OK) == 0)
         F2FS_SYSFS_PATH = "/sys/fs/f2fs_dev";
     else {
-        LOGI("/sys/fs/f2fs is not found, skip tuning!\n");
+        LOGD("tune_f2fs: /sys/fs/f2fs is not found, skip tuning!\n");
         return;
     }
-	
-	
+	LOGI("tune_f2fs: %s\n", F2FS_SYSFS_PATH);
     // Tune f2fs sysfs node
     if (auto dir = xopen_dir(F2FS_SYSFS_PATH); dir) {
         for (dirent *entry; (entry = readdir(dir.get()));) {
@@ -605,7 +605,7 @@ void post_fs_data(int client) {
     rebind_early_to_mirr();
     prune_su_access();
 
-    LOGI("Environment PATH=[%s]\n", getenv("PATH"));
+    LOGI("PATH=[%s]\n", getenv("PATH"));
 
     if (access(SECURE_DIR, F_OK) != 0) {
         if (SDK_INT < 24) {
