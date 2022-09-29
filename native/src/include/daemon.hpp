@@ -64,8 +64,6 @@ struct module_info {
 };
 
 extern bool zygisk_enabled;
-extern int app_process_32;
-extern int app_process_64;
 extern std::vector<module_info> *module_list;
 
 int connect_daemon(int req, bool create = false);

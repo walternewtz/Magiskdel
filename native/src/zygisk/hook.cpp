@@ -20,8 +20,8 @@ using jni_hook::tree_map;
 using xstring = jni_hook::string;
 
 // Extreme verbose logging
-//#define ZLOGV(...) ZLOGD(__VA_ARGS__)
-#define ZLOGV(...)
+#define ZLOGV(...) ZLOGD(__VA_ARGS__)
+// #define ZLOGV(...)
 
 static bool unhook_functions();
 
@@ -235,15 +235,8 @@ void vtable_entry(void *self, JNIEnv* env) {
     reinterpret_cast<decltype(&onVmCreated)>(gAppRuntimeVTable[N])(self, env);
 }
 
-// This method is a trampoline for swizzling android::AppRuntime vtable
-bool swizzled = false;
-DCL_HOOK_FUNC(void, setArgv0, void *self, const char *argv0, bool setProcName) {
-    if (swizzled) {
-        old_setArgv0(self, argv0, setProcName);
-        return;
-    }
-
-    ZLOGD("AndroidRuntime::setArgv0\n");
+void hookVirtualTable(void *self) {
+    ZLOGD("hook AndroidRuntime virtual table\n");
 
     // We don't know which entry is onVmCreated, so overwrite every one
     // We also don't know the size of the vtable, but 8 is more than enough
@@ -260,9 +253,6 @@ DCL_HOOK_FUNC(void, setArgv0, void *self, const char *argv0, bool setProcName) {
     // Swizzle C++ vtable to hook virtual function
     gAppRuntimeVTable = *reinterpret_cast<void***>(self);
     *reinterpret_cast<void***>(self) = new_table;
-    swizzled = true;
-
-    old_setArgv0(self, argv0, setProcName);
 }
 
 #undef DCL_HOOK_FUNC
@@ -703,7 +693,8 @@ static int hook_register(const char *path, const char *symbol, void *new_func, v
     XHOOK_REGISTER_SYM(PATH_REGEX, #NAME, NAME)
 
 #define ANDROID_RUNTIME ".*/libandroid_runtime.so$"
-#define APP_PROCESS     "^/system/bin/app_process.*"
+
+#include "elf_util.h"
 
 void hook_functions() {
 #if MAGISK_DEBUG
@@ -728,11 +719,19 @@ void hook_functions() {
             xhook_list->end());
 
     if (old_jniRegisterNativeMethods == nullptr) {
-        ZLOGD("jniRegisterNativeMethods not hooked, using fallback\n");
+        do {
+            ZLOGD("jniRegisterNativeMethods not hooked, using fallback\n");
 
-        // android::AndroidRuntime::setArgv0(const char*, bool)
-        XHOOK_REGISTER_SYM(APP_PROCESS, "_ZN7android14AndroidRuntime8setArgv0EPKcb", setArgv0);
-        hook_refresh();
+            SandHook::ElfImg art("libandroid_runtime.so");
+
+            auto *GetRuntime = art.getSymbAddress<void*(*)()>("_ZN7android14AndroidRuntime10getRuntimeEv");
+
+            if (GetRuntime == nullptr) {
+                ZLOGE("GetRuntime is nullptr");
+                break;
+            }
+            hookVirtualTable(GetRuntime());
+        } while (false);
 
         // We still need old_jniRegisterNativeMethods as other code uses it
         // android::AndroidRuntime::registerNativeMethods(_JNIEnv*, const char*, const JNINativeMethod*, int)

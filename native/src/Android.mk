@@ -44,7 +44,8 @@ LOCAL_SRC_FILES := \
     zygisk/memory.cpp \
     zygisk/deny/cli.cpp \
     zygisk/deny/utils.cpp \
-    zygisk/deny/revert.cpp
+    zygisk/deny/revert.cpp \
+    zygisk/elf_util.cpp
 
 LOCAL_LDLIBS := -llog
 LOCAL_LDFLAGS := -Wl,--dynamic-list=src/exported_sym.txt
@@ -61,8 +62,10 @@ LOCAL_SRC_FILES := init/preload.c
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
+LOCAL_STATIC_LIBRARIES := libbase
 LOCAL_MODULE := zygisk-ld
-LOCAL_SRC_FILES := zygisk/loader.c
+LOCAL_SRC_FILES := zygisk/loader.cpp
+LOCAL_LDLIBS := -llog
 include $(BUILD_SHARED_LIBRARY)
 
 endif

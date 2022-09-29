@@ -10,14 +10,20 @@
 #define HIJACK_BIN64   "/system/bin/appwidget"
 #define HIJACK_BIN32   "/system/bin/bu"
 
+#define NATIVE_BRIDGE_PROP "ro.dalvik.vm.native.bridge"
+
+#define LOADER_LIB "libzygisk-ld.so"
+#define ZYGISK_LIB "libzygisk.so"
+
+extern std::string orig_native_bridge;
+
 namespace ZygiskRequest {
 enum : int {
-    SETUP,
     GET_INFO,
     GET_LOG_PIPE,
     CONNECT_COMPANION,
     GET_MODDIR,
-    PASSTHROUGH,
+    GET_ORIG_NB,
     END
 };
 }
