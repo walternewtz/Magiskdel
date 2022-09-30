@@ -61,7 +61,7 @@ FILE *pipe_fp = NULL;
 #define do_kill (denylist_enforced)
 
 static void rescan_apps() {
-    LOGD("hide: rescanning apps\n");
+    //LOGD("hide: rescanning apps\n");
 
     app_id_to_pkgs.clear();
 
@@ -385,7 +385,7 @@ int enable_whitelist(){
     else if (!denylist_enforced)
          return DenyResponse:: NOT_ENFORCED;
          
-    LOGI("* Enable MagiskHide WhiteList\n");
+    LOGI("* Enable MagiskHideAll\n");
 
     hide_whitelist = true;
     update_whitelist_config();
@@ -396,8 +396,7 @@ int disable_whitelist(){
     if (!hide_whitelist)
         return DenyResponse::OK;
         
-         
-    LOGI("* Disable MagiskHide WhiteList\n");
+    LOGI("* Disable MagiskHideAll\n");
 
     hide_whitelist = false;
     update_whitelist_config();

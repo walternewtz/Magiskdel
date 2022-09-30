@@ -254,7 +254,8 @@
     <string name="settings_magiskhide_whitelist_summary">Chỉ những ứng dụng đã được cấp đặc quyền root mới có thể truy cập Magisk.  Kích hoạt tùy chọn này có thể làm cho hệ thống không ổn định và thậm chí còn tồi tệ hơn. Vui lòng chỉ bật tùy chọn này nếu cần thiết.</string>
     <string name="settings_anti_bootloop_title">Bảo vệ Bootloop</string>
     <string name="settings_anti_bootloop_summary">Tự khởi động vào chế độ chỉ lõi khi zygote không thể khởi động nhiều lần</string>
-   <string name="settings_coreonly_title">Chế độ chỉ lõi</string>
+    <string name="settings_coreonly_title">Chế độ chỉ lõi</string>
     <string name="settings_coreonly_summary">Chỉ có các tính năng cốt lõi như MagiskSU (Quyền truy cập Root) và MagiskHide và sẽ không có mô-đun nào hoạt động ở chế độ Chỉ lõi. Bắt buộc phải khởi động lại để có hiệu lực.</string>
+    <string name="settings_magiskhide_whitelist_summary2">(Chỉ dành cho gỡ lỗi) Buộc MagiskHide xử lý tất cả các ứng dụng ngoại trừ các ứng dụng nằm trong danh sách superuser</string>
 
 </resources>

@@ -305,8 +305,8 @@ object CoreOnly : BaseSettingsItem.Toggle() {
 
 
 object WhiteList : BaseSettingsItem.Toggle() {
-    override val title = R.string.settings_magiskhide_whitelist_title.asText()
-    override val description get() = R.string.settings_magiskhide_whitelist_summary.asText()
+    override val title = R.string.settings_magiskhide_whitelist_title2.asText()
+    override val description get() = R.string.settings_magiskhide_whitelist_summary2.asText()
 
     override var value = Config.whiteList
         set(value) {
@@ -315,6 +315,7 @@ object WhiteList : BaseSettingsItem.Toggle() {
             Shell.cmd("magisk --hide $cmd").submit { result ->
                 if (result.isSuccess) {
                     Config.whiteList = value
+                    DenyListConfig.refresh()
                     WhiteList.refresh()
                 } else {
                     field = !value
@@ -336,7 +337,7 @@ object DenyListConfig : BaseSettingsItem.Blank() {
     override val title = R.string.settings_hidelist_config_title.asText()
     override val description = R.string.settings_hidelist_config_summary.asText()
     override fun refresh() {
-        isEnabled = true
+        isEnabled = (Config.denyList && !Config.whiteList) || !Config.denyList
     }
 }
 

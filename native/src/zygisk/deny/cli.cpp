@@ -26,8 +26,11 @@ Actions:
                    namespace and do all unmounts
 
 Magisk Delta specific Actions:
-   blacklist       Use BlackList mode (default)
-   whitelist       Use WhiteList mode
+   blacklist       Normal MagiskHide mode (default)
+                   apps on hidelist will be targeted
+   whitelist       Enable MagiskHideAll mode
+                   apps are not granted Magisk superuser
+                   will be targeted
    --do-unmount [PID...]
                    Unmount all Magisk modifications
                    directly [in another namespace...]
@@ -146,7 +149,7 @@ int denylist_cli(int argc, char **argv) {
     	fprintf(stderr, "MagiskHide is enabled\n");
         goto return_code;
     case DenyResponse::WHITELIST_ENFORCED:
-    	fprintf(stderr, "MagiskHide WhiteList is enabled\n");
+    	fprintf(stderr, "MagiskHide is enabled for all apps\n");
         return 0;
     case DenyResponse::ITEM_EXIST:
         fprintf(stderr, "Target already exists in hidelist\n");

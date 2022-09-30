@@ -255,12 +255,12 @@ unload_magisk(){
 local MAGISKVERCODE="$(magisk -V)"
 if [ ! "$MAGISKVERCODE" -lt "25200" ] && is_delta; then
     # revert magisk modifications
-    magisk magiskhide --do-unmount $(pidof zygote) $(pidof zygote64)
+    magisk magiskhide --do-unmount 1
     # stop magisk daemon
     killall -SIGKILL magiskd
 else
     # use built-in command, which might cause freeze
-    magisk --stop &
+    magisk --stop
 fi
 }
 
