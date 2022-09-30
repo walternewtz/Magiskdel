@@ -168,9 +168,6 @@ DCL_HOOK_FUNC(int, unshare, int flags) {
         g_ctx->process && g_ctx->process != "com.android.systemui"sv) {
         if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
             revert_unmount();
-        } else {
-            umount2("/system/bin/app_process64", MNT_DETACH);
-            umount2("/system/bin/app_process32", MNT_DETACH);
         }
         // Restore errno back to 0
         errno = 0;
@@ -698,7 +695,7 @@ static int hook_register(const char *path, const char *symbol, void *new_func, v
 
 void hook_functions() {
 #if MAGISK_DEBUG
-    // xhook_enable_debug(1);
+    xhook_enable_debug(1);
     xhook_enable_sigsegv_protection(0);
 #endif
     default_new(xhook_list);

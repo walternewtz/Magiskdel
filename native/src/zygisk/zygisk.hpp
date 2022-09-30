@@ -23,7 +23,7 @@ enum : int {
     GET_LOG_PIPE,
     CONNECT_COMPANION,
     GET_MODDIR,
-    GET_ORIG_NB,
+    GET_INIT_INFO,
     END
 };
 }

@@ -8,8 +8,9 @@
 using namespace std;
 
 static void lazy_unmount(const char* mountpoint) {
-    if (umount2(mountpoint, MNT_DETACH) != -1)
+    if (xumount2(mountpoint, MNT_DETACH) != -1)
         LOGD("denylist: Unmounted (%s)\n", mountpoint);
+    else LOGE("failed to umount %s", mountpoint);
 }
 
 #define TMPFS_MNT(dir) (mentry->mnt_type == "tmpfs"sv && str_starts(mentry->mnt_dir, "/" #dir))

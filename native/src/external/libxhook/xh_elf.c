@@ -462,6 +462,8 @@ static int xh_elf_replace_function(xh_elf_t *self, const char *symbol, ElfW(Addr
         XH_LOG_ERROR("get addr prot failed. ret: %d", r);
         return r;
     }
+
+    XH_LOG_INFO("old prot %o at addr %p", old_prot, (void*)addr);
     
     if(old_prot != need_prot)
     {

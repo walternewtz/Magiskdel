@@ -36,11 +36,14 @@ extern "C" __used void* zygisk_inject_entry(void *handle, void *callbacks) {
     void *orig_bridge = nullptr;
 
     do {
-        int fd = zygisk_request(ZygiskRequest::GET_ORIG_NB);
+        int fd = zygisk_request(ZygiskRequest::GET_INIT_INFO);
         if (fd < 0) {
             LOGE("failed to connect to daemon");
             break;
         }
+
+        MAGISKTMP = read_string(fd);
+        ZLOGD("read magisktmp %s", MAGISKTMP.c_str());
 
         auto orig_bridge_name = read_string(fd);
         int sdk = read_int(fd);
@@ -311,7 +314,8 @@ static void get_moddir(int client) {
     close(dfd);
 }
 
-static void send_bridge(int client) {
+static void send_init_info(int client) {
+    write_string(client, MAGISKTMP);
     write_string(client, orig_native_bridge);
     write_int(client, parse_int(getprop("ro.build.version.sdk")));
 }
@@ -336,8 +340,8 @@ void zygisk_handler(int client, const sock_cred *cred) {
     case ZygiskRequest::GET_MODDIR:
         get_moddir(client);
         break;
-    case ZygiskRequest::GET_ORIG_NB:
-        send_bridge(client);
+    case ZygiskRequest::GET_INIT_INFO:
+        send_init_info(client);
         setprop(NATIVE_BRIDGE_PROP, orig_native_bridge.data());
         LOGD("native bridge has been reset");
         break;
