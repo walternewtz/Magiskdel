@@ -13,6 +13,7 @@
 #include <bitset>
 #include <string>
 #include <cinttypes>
+#include <poll.h>
 
 
 #include <daemon.hpp>
@@ -54,7 +55,16 @@ extern bool uid_granted_root(int uid);
 // Process monitoring
 pthread_t monitor_thread;
 void proc_monitor();
-FILE *pipe_fp = NULL;
+static pstream ps_a, ps_b;
+
+static void kill_pipe(){
+    ps_a.term();
+    ps_b.term();
+}
+
+static void fflush_logcat(){
+    exec_command_sync("/system/bin/logcat", "-b", "all", "-c");
+}
 
 #define do_kill (denylist_enforced)
 
@@ -389,7 +399,7 @@ int enable_whitelist(){
 int disable_whitelist(){
     if (!hide_whitelist)
         return DenyResponse::OK;
-        
+
     LOGI("* Disable MagiskHideAll\n");
 
     hide_whitelist = false;
@@ -399,7 +409,6 @@ int disable_whitelist(){
 
 
 int enable_deny(bool props) {
-    string logcat_dir = MAGISKTMP + "/" INTLROOT "/logcat";
     if (denylist_enforced) {
         return DenyResponse::OK;
     } else {
@@ -423,8 +432,6 @@ int enable_deny(bool props) {
             return DenyResponse::ERROR;
         }
         if (!zygisk_enabled) {
-            rm_rf(logcat_dir.data());
-            xsymlink("/system/bin/logcat", logcat_dir.data());
             auto ret1 = new_daemon_thread(&proc_monitor);
             if (ret1){
                 // cannot start monitor_proc, return daemon error
@@ -446,14 +453,12 @@ int enable_deny(bool props) {
 }
 
 int disable_deny() {
-    string logcat_dir = MAGISKTMP + "/" INTLROOT "/logcat";
     if (denylist_enforced) {
         denylist_enforced = false;
         LOGI("* Disable MagiskHide\n");
     }
     if (!zygisk_enabled) {
-           kill_process(logcat_dir.data(), true);
-           pthread_kill(monitor_thread, SIGTERMTHRD);
+        pthread_kill(monitor_thread, SIGTERMTHRD);
     }
     update_deny_config();
 
@@ -491,7 +496,7 @@ bool is_deny_target(int uid, string_view process, int max_len) {
     int manager_app_id = get_manager();
     
     if (denylist_enforced && hide_whitelist){
-        if (uid_granted_root(uid) || (to_app_id(uid) == manager_app_id) || (app_id == 0) || (uid < 10000))
+        if (uid_granted_root(uid) || (to_app_id(uid) == manager_app_id) || (app_id == 0))
             return false;
         return true;
     }
@@ -679,16 +684,67 @@ static bool is_zygote_done() {
 #endif
 }
 
+
+
+static bool check_process(int pid, const char *process = 0, const char *context = 0, const char *exe = 0) {
+    char path[128];
+    char buf[1024];
+    FILE *fprocess;
+    ssize_t len;
+
+    if (!process) goto check_context;
+    sprintf(path, "/proc/%d/cmdline", pid);
+    fprocess = fopen(path, "re");
+    if (!fprocess) return false;
+    fscanf(fprocess, "%s", buf);
+    fclose(fprocess);
+    if (strcmp(buf, process) != 0) return false;
+
+    check_context:
+    if (!context) goto check_exe;
+    sprintf(path, "/proc/%d/attr/current", pid);
+    fprocess = fopen(path, "re");
+    if (!fprocess) return false;
+    fscanf(fprocess, "%s", buf);
+    fclose(fprocess);
+    if (strcmp(buf, context) != 0) return false;
+    
+    check_exe:
+    if (!exe) goto final;
+    sprintf(path, "/proc/%d/exe", pid);
+    len = readlink(path, buf, sizeof(buf)-1);
+    if (len != -1) {
+      buf[len] = '\0';
+    }
+    if (strcmp(buf, exe) != 0) return false;
+
+    final:
+    return true;
+}
+
+static bool check_process2(int pid, const char *process, const char *context, const char *exe){
+    if (access("/sys/fs/selinux",F_OK) == 0)
+        return check_process(pid,process,context,exe);
+    return check_process(pid,process,0,exe);
+}
+
+static bool not_zygote_process(int pid_){
+    return !check_process2(pid_, "zygote", "u:r:zygote:s0", "/system/bin/app_process32")  
+            && !check_process2(pid_, "zygote", "u:r:zygote:s0", "/system/bin/app_process64")
+            && !check_process2(pid_, "zygote", "u:r:zygote:s0", "/system/bin/app_process")
+            && !check_process2(pid_, "zygote64", "u:r:zygote:s0", "/system/bin/app_process64") 
+            && !check_process2(pid_, "zygote32", "u:r:zygote:s0", "/system/bin/app_process32")
+            && !check_process2(pid_, "zygote32", "u:r:zygote:s0", "/system/bin/app_process");
+}
+
+static bool is_zygote_process(int pid_){
+    return !not_zygote_process(pid_);
+}
+
 static void check_zygote() {
     crawl_procfs([](int pid) -> bool {
-        char buf[32];
-        sprintf(buf, "/proc/%d/attr/current", pid);
-        auto fp = open_file(buf, "r");
-        if (fp) {
-            fscanf(fp.get(), "%s", buf);
-            if (buf == "u:r:zygote:s0"sv && parse_ppid(pid) == 1)
-                new_zygote(pid);
-        }
+        if (is_zygote_process(pid) && parse_ppid(pid) == 1)
+            new_zygote(pid);
         return true;
     });
     if (is_zygote_done()) {
@@ -757,8 +813,7 @@ static void term_thread(int) {
     sigaction(SIGIO, &act, nullptr);
     sigaction(SIGALRM, &act, nullptr);
     LOGD("proc_monitor: terminate\n");
-    if (pipe_fp) pclose(pipe_fp);
-    pipe_fp = NULL;
+    kill_pipe();
     pthread_exit(nullptr);
 }
 
@@ -844,8 +899,9 @@ check_and_hide:
     // stop app process as soon as possible and do check if this process is target or not
     kill(pid, SIGSTOP);
 
-    if (!is_deny_target(uid, cmdline, 95))
-            goto not_target;
+    if (!is_deny_target(uid, cmdline, 95)) {
+        goto not_target;
+    }
 
     // Ensure ns is separated
     read_ns(pid, &st);
@@ -860,19 +916,30 @@ check_and_hide:
     }
 
     // Finally this is our target
-    // Detach but the process should still remain stopped
+    // We stop target process and do all unmounts
     // The hide daemon will resume the process after hiding it
-    // Note that we are now in "PTRACE_EVENT stop", not "signal-delivery-stop",
-    // signal injection (PTRACE_restart with signal) may simply be ignored, so use kill() instead
     LOGI("proc_monitor: [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
+
+    // hide magisk
     revert_unmount(pid);
     kill(pid, SIGCONT);
     return true;
 
 not_target:
-    //LOGD("proc_monitor: [%s] is not our target\n", cmdline);
     kill(pid, SIGCONT);
     return true;
+}
+
+static bool is_root_process(int pid){
+    char path[128];
+    struct stat st;
+    sprintf(path, "/proc/%d", pid);
+    if (stat(path, &st)) {
+        // Process died unexpectedly, ignore
+        return false;
+    }
+    int uid = st.st_uid;
+    return uid == 0;
 }
 
 static void new_zygote(int pid) {
@@ -905,21 +972,6 @@ void do_check_fork(int pid) {
         _exit(0);
     }
 }
-
-static bool is_zygote_process(int pid) {
-    char path[128];
-    char buf[1024];
-    sprintf(path, "/proc/%d/cmdline", pid);
-    FILE *fprocess = fopen(path, "re");
-    if (!fprocess) return false;
-    fscanf(fprocess, "%s", buf);
-    fclose(fprocess);
-    // if this is not zygote process
-    if (strcmp(buf, "zygote") != 0 && strcmp(buf, "zygote32") != 0 && strcmp(buf, "zygote64") != 0) return false;
-    return true;
-}
-
-
 
 void proc_monitor() {
     monitor_thread = pthread_self();
@@ -961,56 +1013,119 @@ void proc_monitor() {
         setitimer(ITIMER_REAL, &interval, nullptr);
     }
 
-    int pipe_pid = 0;
-    string logcat_dir = MAGISKTMP + "/" INTLROOT "/logcat";
-    char logcat_cmd[128];
-    sprintf(logcat_cmd, "echo \"PID=$$\"; %s -b all -c; %s Zygote:* *:S Magisk:S", logcat_dir.data(), logcat_dir.data());
-    pipe_fp = popen(logcat_cmd , "r");
-    fscanf(pipe_fp, "PID=%d", &pipe_pid);
-    // open logcat process and watch out zygote fork
-    // this way is very less effective because you can only know zygote fork event
-    // if logcat is killed (killall logcat), proc_monitor will be stuck, magiskhide need to re-enabled!
+    pid_t pipe_fp = -1;
+    int pipe_in,pipe_out;
+    ps_a.init();
+    ps_b.init();
+    char *command[] = {"/system/bin/logcat", 
+	    "--uid=0", "Zygote:*", "*:S", 0};
+    char *command_[] = {"/system/bin/logcat",
+	    "Zygote:*", "*:S", 0};
+    char *command2[] = {"/system/bin/logcat", 
+        "-b", "events", "-s", 
+		"boot_progress_pms_ready",
+        "-s", "am_proc_start", 0};
     char buf[4098];
     char log_pid[10];
     char pid[10];
-    if (pipe_fp){
-        LOGD("proc_monitor: new pipe PID=[%d]\n", pipe_pid);
-        while (1){
-            pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
-            // check if pipe is dead, maybe logd is off?
-            if (zombie_pid(pipe_pid)){
-                sleep(1);
-                LOGD("proc_monitor: pipe dead PID=[%d]\n", pipe_pid);
-                // close pipe
-                if (pipe_fp) pclose(pipe_fp); 
-                // open new pipe
-                pipe_fp = popen(logcat_cmd, "r");
-                // get pid of pipe
-                fscanf(pipe_fp, "PID=%d", &pipe_pid);
-                LOGD("proc_monitor: new pipe PID=[%d]\n", pipe_pid);
-                continue;
-            }
-            fgets(buf, sizeof(buf), pipe_fp);
-            // filter logcat to know if zygote fork new process
-            if (!strstr(buf, "Forked child process") && !strstr(buf, "Calling ZygoteHooks.beginPreload()")) continue;
-            // new zygote
-            if (strstr(buf, "Calling ZygoteHooks.beginPreload()")) {
-                sscanf(buf, "%*s %*s %*s %s %*s Zygote  : Calling ZygoteHooks.beginPreload()", log_pid);
-                if (!is_zygote_process(atoi(log_pid))) continue;
-                check_zygote();
-                continue;
-            }
-            sscanf(buf, "%*s %*s %*s %s %*s Zygote  : Forked child process %s", log_pid, pid);
-            // avoid fucked by app, spam fake logcat by check if logcat comes from zygote
-            // if this is not zygote logcat, ignored!
-            if (!is_zygote_process(atoi(log_pid))) continue;
-            pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
-            // zygote fork event detected, check if this is target app
-            //LOGD("proc_monitor: zygote new fork PID=[%s]\n", pid);
-            // fork new process, check pid and do revert unmount
-            do_check_fork(atoi(pid));
+    int p;
+    int ret;
+    struct pollfd pfd[1];
+
+    if (SDK_INT < 29) goto am_proc_start; // Android 9 and below
+
+    while(1){
+        pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+        // check if pipe is dead, maybe logd is off?
+        if (!zombie_pid(pipe_fp)) goto collect_log;
+        kill_pipe();
+        fflush_logcat();
+        ps_a.open(command);
+        ps_b.open(command_);
+        sleep(1);
+        if (zombie_pid(ps_a.pid)){
+            LOGD("proc_monitor: logcat failback\n");
+            ps_a.term();
+            pipe_fp = ps_b.pid;
+            pipe_in = ps_b.in;
+            pipe_out = ps_b.out;
+        } else {
+            ps_b.term();
+            pipe_fp = ps_a.pid;
+            pipe_in = ps_a.in;
+            pipe_out = ps_a.out;
         }
-        pclose(pipe_fp);
-        pipe_fp = NULL;
+        LOGD("proc_monitor: new pipe PID=[%d]\n", pipe_fp);
+        continue;
+
+        collect_log:
+        pfd[0].fd = pipe_out;
+        pfd[0].events = POLLIN;
+        ret = poll(pfd, 1, 1000);
+        if(ret <= 0)
+            continue; // timeout
+        read(pipe_out, buf, sizeof(buf));
+        sscanf(buf, "%*s %*s %d", &p);
+        if (!is_root_process(p)) continue;
+        if (not_zygote_process(p)) continue;
+
+        // filter logcat to know if zygote fork new process
+        const char *log = strstr(buf, "Forked child process");
+        // new zygote
+        if (strstr(buf, "Calling ZygoteHooks.beginPreload()")) {
+            if (not_zygote_process(p)) continue;
+            check_zygote();
+            continue;
+        }
+        if (!log) continue;
+        sscanf(log, "Forked child process %s", pid);
+        
+        pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
+        // zygote fork event detected, check if this is target app
+        //LOGD("proc_monitor: zygote new fork PID=[%s]\n", pid);
+        // fork new process, check pid and do revert unmount
+        do_check_fork(atoi(pid));
+    }
+    
+    am_proc_start:
+
+    while (1){
+        pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+        // check if pipe is dead, maybe logd is off?
+        if (!zombie_pid(pipe_fp)) goto collect_log_;
+        kill_pipe();
+        fflush_logcat();
+        pipe_fp = ps_a.open(command2);
+        sleep(1);
+        pipe_in = ps_a.in;
+        pipe_out = ps_a.out;
+        LOGD("proc_monitor: new pipe PID=[%d]\n", pipe_fp);
+        continue;
+
+        collect_log_:
+        pfd[0].fd = pipe_out;
+        pfd[0].events = POLLIN;
+        ret = poll(pfd, 1, 1000);
+        if(ret <= 0)
+             continue; // timeout
+        read(pipe_out, buf, sizeof(buf));
+
+        const char *log = strstr(buf, "[");
+
+        // new zygote
+        if (strstr(buf, "boot_progress_pms_ready") && !log) {
+            check_zygote();
+            continue;
+        }
+        // filter logcat to get pid
+        if (!log) continue;
+        sscanf(log, "[%*d,%d", &p);
+        // any process can print log with custom name
+        // check if this is really system_server log
+        pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
+        // zygote fork event detected, check if this is target app
+        //LOGD("proc_monitor: zygote new fork PID=[%s]\n", pid);
+        // fork new process, check pid and do revert unmount
+        do_check_fork(p);
     }
 }

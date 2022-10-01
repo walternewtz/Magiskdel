@@ -546,6 +546,7 @@ void HookContext::nativeSpecializeAppProcess_pre() {
             // Only apply the fix before Android 11, as it can cause undefined behaviour in later versions
              char sdk_ver_str[92]; // PROPERTY_VALUE_MAX
              if (__system_property_get("ro.build.version.sdk", sdk_ver_str) && atoi(sdk_ver_str) < 30) {
+                ZLOGI("unshare [%s] [%d]\n", process, args.app->uid);
                 args.app->mount_external = 1 /* MOUNT_EXTERNAL_DEFAULT */;
             }
         }
