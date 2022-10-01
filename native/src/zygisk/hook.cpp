@@ -531,6 +531,7 @@ void HookContext::app_specialize_pre() {
     int fd = remote_get_info(args.app->uid, process, &info_flags, module_fds);
     if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
         ZLOGI("[%s] is on the denylist\n", process);
+        logging_muted = true;
         flags[DO_REVERT_UNMOUNT] = true;
     } else if (fd >= 0) {
         run_modules_pre(module_fds);
