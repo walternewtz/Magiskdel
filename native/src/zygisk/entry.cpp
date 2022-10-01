@@ -36,9 +36,10 @@ extern "C" __used void* zygisk_inject_entry(void *handle, void *callbacks) {
     void *orig_bridge = nullptr;
 
     do {
-        int fd = zygisk_request(ZygiskRequest::GET_INIT_INFO);
-        if (fd < 0) {
+        int fd = zygisk_request(ZygiskRequest::SETUP);
+        if (fd < 0 || read_int(fd)) {
             LOGE("failed to connect to daemon");
+            exit(1);
             break;
         }
 
@@ -235,6 +236,67 @@ static int zygote_start_counts[] = { 0, 0 };
 #define zygote_started (zygote_start_counts[0] + zygote_start_counts[1])
 #define zygote_start_reset(val) { zygote_start_counts[0] = val; zygote_start_counts[1] = val; }
 
+static void set_native_bridge() {
+    setprop(NATIVE_BRIDGE_PROP, LOADER_LIB);
+    LOGD("native bridge has been set");
+}
+
+static void reset_native_bridge() {
+    setprop(NATIVE_BRIDGE_PROP, orig_native_bridge.data());
+    LOGD("native bridge has been reset");
+}
+
+void on_zygote_restart() {
+    if (zygote_start_counts[0] >= 5 || zygote_start_counts[1] >= 5) {
+        // Bootloop prevention
+        timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        if (ts.tv_sec - last_zygote_start.tv_sec > 60) {
+            // This is very likely manual soft reboot
+            memcpy(&last_zygote_start, &ts, sizeof(ts));
+            zygote_start_reset(0);
+        } else {
+            // If any zygote relaunched more than 5 times within a minute,
+            // don't do any setups further to prevent bootloop.
+            zygote_start_reset(999);
+            LOGW("Zygote has restarted too much times, temporary disable zygisk");
+            return;
+        }
+    }
+    set_native_bridge();
+}
+
+static void setup(int client, const sock_cred *cred) {
+    LOGD("zygisk: setup for pid=[%d]\n", cred->pid);
+
+    char buf[4096];
+    if (!get_exe(cred->pid, buf, sizeof(buf))) {
+        write_int(client, 1);
+        return;
+    }
+
+    bool is_64_bit = str_ends(buf, "64");
+
+    if (!zygote_started) {
+        // First zygote launch, record time
+        clock_gettime(CLOCK_MONOTONIC, &last_zygote_start);
+    }
+
+    if (zygote_start_count) {
+        // This zygote ABI had started before, kill existing zygiskd
+        close(zygiskd_sockets[0]);
+        close(zygiskd_sockets[1]);
+        zygiskd_sockets[0] = -1;
+        zygiskd_sockets[1] = -1;
+    }
+    ++zygote_start_count;
+
+    write_int(client, 0);
+    write_string(client, MAGISKTMP);
+    write_string(client, orig_native_bridge);
+    write_int(client, SDK_INT);
+}
+
 extern bool uid_granted_root(int uid);
 static void get_process_info(int client, const sock_cred *cred) {
     int uid = read_int(client);
@@ -314,10 +376,68 @@ static void get_moddir(int client) {
     close(dfd);
 }
 
-static void send_init_info(int client) {
-    write_string(client, MAGISKTMP);
-    write_string(client, orig_native_bridge);
-    write_int(client, parse_int(getprop("ro.build.version.sdk")));
+static void system_server_listener(int pid) {
+    char buf1[128];
+    char buf2[128];
+    ssprintf(buf1, sizeof(buf1), "/proc/%d/cmdline", pid);
+    for (int i = 0; i < 60; i++) {
+        sleep(1);
+        int fd = xopen(buf1, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            LOGE("system server %d maybe died", pid);
+            return;
+        }
+        xxread(fd, buf2, sizeof(buf2));
+        close(fd);
+        if (strncmp(buf2, "system_server", sizeof("system_server")) == 0) {
+            LOGD("system server %d started", pid);
+            reset_native_bridge();
+            return;
+        }
+    }
+    LOGW("cannot detect system server %d start", pid);
+}
+
+static void zygote_listener(int fd) {
+    nice(18);
+    struct flock lock {
+        .l_type = F_WRLCK,
+        .l_whence = SEEK_SET,
+        .l_start = 0,
+        .l_len = 0
+    };
+    while (fcntl(fd, F_SETLKW, &lock) < 0) {
+        if (errno == EINTR) continue;
+        else {
+            PLOGE("get wr lock %d", fd);
+            close(fd);
+            return;
+        }
+    }
+    on_zygote_restart();
+    close(fd);
+    LOGW("zygote maybe died");
+}
+
+static void on_system_server_forked(int client, int pid) {
+    char buf[4096];
+    ssprintf(buf, sizeof(buf), "%s/%s/%d", MAGISKTMP.data(), ZYGISKBIN, pid);
+
+    int ss_pid = read_int(client);
+    new_daemon_thread(reinterpret_cast<thread_entry>(system_server_listener), reinterpret_cast<void*>(ss_pid));
+
+    int fd1 = xopen(buf, O_CREAT | O_RDONLY | O_CLOEXEC);
+    send_fd(client, fd1);
+    close(fd1);
+    // wait remote set read lock
+    if (read_int(client)) {
+        LOGE("remote failed to get lock");
+        return;
+    }
+
+    int fd2 = xopen(buf, O_WRONLY | O_CLOEXEC);
+    unlink(buf);
+    new_daemon_thread(reinterpret_cast<thread_entry>(zygote_listener), reinterpret_cast<void*>(fd2));
 }
 
 void zygisk_handler(int client, const sock_cred *cred) {
@@ -340,10 +460,11 @@ void zygisk_handler(int client, const sock_cred *cred) {
     case ZygiskRequest::GET_MODDIR:
         get_moddir(client);
         break;
-    case ZygiskRequest::GET_INIT_INFO:
-        send_init_info(client);
-        setprop(NATIVE_BRIDGE_PROP, orig_native_bridge.data());
-        LOGD("native bridge has been reset");
+    case ZygiskRequest::SETUP:
+        setup(client, cred);
+        break;
+    case ZygiskRequest::SYSTEM_SERVER_FORKED:
+        on_system_server_forked(client, cred->pid);
         break;
     default:
         // Unknown code

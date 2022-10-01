@@ -2,6 +2,7 @@
 #include <sys/mount.h>
 #include <dlfcn.h>
 #include <bitset>
+#include <sys/prctl.h>
 
 #include <xhook.h>
 
@@ -20,8 +21,8 @@ using jni_hook::tree_map;
 using xstring = jni_hook::string;
 
 // Extreme verbose logging
-#define ZLOGV(...) ZLOGD(__VA_ARGS__)
-// #define ZLOGV(...)
+// #define ZLOGV(...) ZLOGD(__VA_ARGS__)
+#define ZLOGV(...)
 
 static bool unhook_functions();
 
@@ -391,6 +392,43 @@ int sigmask(int how, int signum) {
     return sigprocmask(how, &set, nullptr);
 }
 
+void create_zygote_lock(int pid) {
+    int holder_pid = old_fork();
+    if (holder_pid < 0) {
+        ZLOGE("failed to create holder: %s", strerror(errno));
+    }
+    if (holder_pid != 0) return;
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
+    if (getppid() == 1) exit(1);
+    int fd = zygisk_request(ZygiskRequest::SYSTEM_SERVER_FORKED);
+    do {
+        if (fd < 0) break;
+        write_int(fd, pid);
+        int lock_fd = recv_fd(fd);
+        if (lock_fd < 0) break;
+        ZLOGD("received lock fd in zygote:%d", lock_fd);
+        struct flock lock{
+                .l_type = F_RDLCK,
+                .l_whence = SEEK_SET,
+                .l_start = 0,
+                .l_len = 0
+        };
+        if (fcntl(lock_fd, F_SETLK, &lock) < 0) {
+            ZLOGE("failed to set lock in zygote: %s", strerror(errno));
+            write_int(fd, 1);
+            break;
+        }
+        write_int(fd, 0);
+        close(logd_fd.exchange(-1));
+        close(fd);
+        setprogname("lockholder");
+        while (true) {
+            pause();
+        }
+    } while (false);
+    close(fd);
+}
+
 void HookContext::fork_pre() {
     g_ctx = this;
     // Do our own fork before loading any 3rd party code
@@ -632,6 +670,9 @@ void HookContext::nativeForkSystemServer_post() {
         ZLOGV("post forkSystemServer\n");
         run_modules_post();
     }
+    if (pid > 0) {
+        create_zygote_lock(pid);
+    }
     fork_post();
 }
 
@@ -696,7 +737,7 @@ static int hook_register(const char *path, const char *symbol, void *new_func, v
 
 void hook_functions() {
 #if MAGISK_DEBUG
-    xhook_enable_debug(1);
+    // xhook_enable_debug(1);
     xhook_enable_sigsegv_protection(0);
 #endif
     default_new(xhook_list);
