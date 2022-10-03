@@ -70,7 +70,7 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
                 if (Const.Version.atLeast_24_0()) {
                     list.add(Zygisk)
                     if (is_delta){
-                        list.addAll(listOf(AntiBLoop, CoreOnly, MagiskHideClass, DenyList, WhiteList, DenyListConfig))
+                        list.addAll(listOf(AntiBLoop, CoreOnly, MagiskHideClass, DenyList, WhiteList, DenyListConfig, CleanHideList))
                     }
                 }
             }
@@ -113,7 +113,7 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
             DenyListConfig -> SettingsFragmentDirections.actionSettingsFragmentToDenyFragment().navigate()
             SystemlessHosts -> createHosts()
             unloadMagisk -> stopMagisk()
-            RiruCore -> createRiru()
+            CleanHideList -> clean_HideList()
             Hide, Restore -> withInstallPermission(andThen)
             AddShortcut -> AddHomeIconEvent().publish()
             else -> andThen()
@@ -150,9 +150,9 @@ class SettingsViewModel : BaseViewModel(), BaseSettingsItem.Handler {
         }
     }
 
-    private fun createRiru() {
-        Shell.cmd("add_riru_core_module").submit {
-            Utils.toast(R.string.settings_riru_toast, Toast.LENGTH_SHORT)
+    private fun clean_HideList() {
+        Shell.cmd("clean_hidelist").submit {
+            Utils.toast(R.string.settings_clean_hidelist_toast, Toast.LENGTH_SHORT)
         }
     }
 

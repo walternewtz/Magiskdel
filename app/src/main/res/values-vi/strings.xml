@@ -257,5 +257,8 @@
     <string name="settings_coreonly_title">Chế độ chỉ lõi</string>
     <string name="settings_coreonly_summary">Chỉ có các tính năng cốt lõi như MagiskSU (Quyền truy cập Root) và MagiskHide và sẽ không có mô-đun nào hoạt động ở chế độ Chỉ lõi. Bắt buộc phải khởi động lại để có hiệu lực.</string>
     <string name="settings_magiskhide_whitelist_summary2">(Chỉ dành cho gỡ lỗi) Buộc MagiskHide xử lý tất cả các ứng dụng ngoại trừ các ứng dụng nằm trong danh sách superuser</string>
+    <string name="settings_clean_hidelist_title">Làm sạch danh sách ẩn</string>
+    <string name="settings_clean_hidelist_summary">Loại bỏ các ứng dụng không tồn tại hoặc đã bị gỡ bỏ khỏi danh sách ẩn</string>
+    <string name="settings_clean_hidelist_toast">Danh sách ẩn đã được làm sạch</string>
 
 </resources>

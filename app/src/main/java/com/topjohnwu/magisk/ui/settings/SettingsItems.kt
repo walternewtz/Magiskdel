@@ -341,9 +341,9 @@ object DenyListConfig : BaseSettingsItem.Blank() {
     }
 }
 
-object RiruCore : BaseSettingsItem.Blank() {
-    override val title = R.string.settings_riru_title.asText()
-    override val description = R.string.settings_riru_summary.asText()
+object CleanHideList : BaseSettingsItem.Blank() {
+    override val title = R.string.settings_clean_hidelist_title.asText()
+    override val description = R.string.settings_clean_hidelist_summary.asText()
 }
 
 // --- Superuser

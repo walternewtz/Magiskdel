@@ -327,6 +327,38 @@ check_system_magisk(){
     $RUNNING_MAGISK && ! $SYSTEMMODE && ALLOWSYSTEMINSTALL=false
 }
 
+clean_hidelist(){
+    local PACKAGE_NAME="$(magisk --sqlite "SELECT package_name FROM hidelist WHERE package_name NOT IN ('isolated')")"
+    local PACKAGE_LIST=""
+    # isolation service
+    local PACKAGE_ISOLIST="$(magisk --sqlite "SELECT process FROM hidelist WHERE package_name IN ('isolated')")"
+    local s t exist
+    for s in $PACKAGE_NAME; do
+        if [ "${s: 13}" == "isolated" ]; then
+            continue
+        fi
+        exist=false
+        for t in $PACKAGE_LIST; do
+            if [ "$t" == "${s: 13}" ]; then
+                exist=true
+                break;
+            fi
+        done
+        if ! $exist; then
+            PACKAGE_LIST="$PACKAGE_LIST ${s: 13}"
+        fi
+    done
+    for s in $PACKAGE_LIST; do
+        if [ ! -d "/data/data/$s" ]; then
+            magisk --hide rm "$s"
+            for t in $(echo "$PACKAGE_ISOLIST" | grep "$s"); do
+                t="${t: 8}"
+                magisk --hide rm isolated "$t"
+            done
+        fi
+    done
+}
+
 #############
 # Initialize
 #############
