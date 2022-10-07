@@ -259,6 +259,11 @@
     <string name="settings_anti_bootloop_title">Bootloop 保护</string>
     <string name="settings_coreonly_summary">仅核心功能，例如 MagiskSU (即 Root 权限) 和 MagiskHide 可用，不加载任何模块。开启本开关并重启手机后可激活核心模式</string>
     <string name="settings_coreonly_title">核心模式</string>
+    <string name="settings_magiskhide_whitelist_summary2">强制 MagiskHide 处理除超级用户列表外的所有应用（仅用于调试目的）</string>
+    <string name="settings_magiskhide_whitelist_title2">全局 MagiskHide</string>
+    <string name="settings_clean_hidelist_summary">删除隐藏列表中所有不存在和未安装的应用</string>
+    <string name="settings_clean_hidelist_title">清理隐藏列表</string>
+    <string name="settings_clean_hidelist_toast">隐藏列表已清理</string>
 
 
 
