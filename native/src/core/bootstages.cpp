@@ -598,8 +598,6 @@ void post_fs_data(int client) {
 
     LOGI("** post-fs-data mode running\n");
 
-    tune_f2fs();
-
     unlock_blocks();
     mount_mirrors();
     rebind_early_to_mirr();
@@ -682,6 +680,8 @@ void boot_complete(int client) {
     reset_sensitive_props();
     if (safe_mode)
         return;
+
+    tune_f2fs();
 
     // At this point it's safe to create the folder
     if (access(SECURE_DIR, F_OK) != 0)
