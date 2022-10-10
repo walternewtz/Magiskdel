@@ -250,6 +250,7 @@ success:
     xmkdir(string(full_early_dir + "/initrc.d").data(), 0755);
     custom_early_dir = "."s + custom_early_dir;
     xsymlink(custom_early_dir.data(), path);
+    cp_afc(full_early_dir.data(), INTLROOT "/early-mount.d");
 
     const char *preinit_part[]={
         "/data/unencrypted", "/data/adb", "/persist", "/metadata", "/cache",
@@ -392,7 +393,6 @@ static void simple_mount(const string &sdir, const string &ddir = "") {
 void early_mount(const char *magisk_tmp){
     LOGI("** early-mount start\n");
     char buf[4098];
-    char buff[4098];
     const char *part[]={
         "/vendor", "/product", "/system_ext",
         nullptr
@@ -413,13 +413,13 @@ void early_mount(const char *magisk_tmp){
     if (access(buf, F_OK) == 0) return;
 
     // SYSTEM
-    sprintf(buf, "%s/" MIRRDIR "/early-mount/system", magisk_tmp);
+    sprintf(buf, "%s/" INTLROOT "/early-mount.d/system", magisk_tmp);
     if (access(buf, F_OK) == 0)
     	simple_mount(buf, "/system");
 
     // VENDOR, PRODUCT, SYSTEM_EXT
     for (int i=0;part[i];i++) {
-        sprintf(buf, "%s/" MIRRDIR "/early-mount/system%s", magisk_tmp, part[i]);
+        sprintf(buf, "%s/" INTLROOT "/early-mount.d/system%s", magisk_tmp, part[i]);
         if (access(buf, F_OK) == 0 && !system_lnk(part[i]))
             simple_mount(buf, part[i]);
     }
@@ -434,10 +434,8 @@ void MagiskInit::setup_tmp(const char *path) {
     xmkdir(INTLROOT, 0755);
     xmkdir(MIRRDIR, 0);
     xmkdir(BLOCKDIR, 0);
-    xmkdir(INTLROOT "/early-mount.d", 0755);
 
     mount_rules_dir();
-    xmount(MIRRDIR "/early-mount", INTLROOT "/early-mount.d", nullptr, MS_BIND, nullptr);
     early_mount(path);
 
     int fd = xopen(INTLROOT "/config", O_WRONLY | O_CREAT, 0);
