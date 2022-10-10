@@ -20,6 +20,7 @@
 #include "core.hpp"
 
 #define TRIGGER_BL "/dev/.magisk_ztrigger"
+#define COUNT_FAILBOOT "/cache/.magisk_checkboot"
 
 #define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
 
@@ -43,6 +44,7 @@ static bool is_rootfs()
     }
 }
 
+bool check_bootloop(const char *name, const char *filename, int max);
 
 static int bind_mount(const char *from, const char *to) {
     int ret = xmount(from, to, nullptr, MS_BIND, nullptr);
@@ -585,6 +587,8 @@ extern int disable_deny();
 void post_fs_data(int client) {
     close(client);
 
+    db_settings dbs;
+
     mutex_guard lock(stage_lock);
 
     if (getenv("REMOUNT_ROOT"))
@@ -597,6 +601,12 @@ void post_fs_data(int client) {
     setup_logfile(true);
 
     LOGI("** post-fs-data mode running\n");
+
+    get_db_settings(dbs, ANTI_BOOTLOOP);
+    if (dbs[ANTI_BOOTLOOP] && !core_only(false))
+        if (!check_bootloop("boot_record",COUNT_FAILBOOT,3)) LOGE("anti_bootloop: cannot record boot\n");
+    else
+        rm_rf(COUNT_FAILBOOT);
 
     unlock_blocks();
     mount_mirrors();
@@ -634,7 +644,6 @@ void post_fs_data(int client) {
         } else {
             exec_common_scripts("post-fs-data");
         }
-        db_settings dbs;
         get_db_settings(dbs, ZYGISK_CONFIG);
         zygisk_enabled = dbs[ZYGISK_CONFIG];
         initialize_denylist();
@@ -677,6 +686,7 @@ void boot_complete(int client) {
 
     LOGI("** boot-complete triggered\n");
     rm_rf(TRIGGER_BL);
+    rm_rf(COUNT_FAILBOOT);
     reset_sensitive_props();
     if (safe_mode)
         return;
@@ -704,27 +714,27 @@ void reboot_coreonly(){
 
 
 
-bool check_bootloop()
+bool check_bootloop(const char *name, const char *filename, int max)
 {
 	int n=1;
-	if (access(TRIGGER_BL, F_OK) != 0) {
+	if (access(filename, F_OK) != 0) {
 		// not exist, we need create file with initial value
-		FILE *ztrigger=fopen(TRIGGER_BL, "wb");
+		FILE *ztrigger=fopen(filename, "wb");
 		if (ztrigger == NULL) return false; // failed
 		fwrite(&n,1,sizeof(int),ztrigger);
 		fclose(ztrigger);
 	}
-	FILE *ztrigger=fopen(TRIGGER_BL, "rb");
+	FILE *ztrigger=fopen(filename, "rb");
 	if (ztrigger == NULL) return false; // failed
 	fread(&n, 1, sizeof(int), ztrigger);
 	fclose(ztrigger);
 	// current number here
-        if (n >= 8) {
-            LOGI("anti_bootloop: zygote failed to start for 8 times, restart!\n");
+        if (n >= max) {
+            LOGI("anti_bootloop: %s reachs %d times, restart!\n", name, max);
             reboot_coreonly();
-        } else LOGI("anti_bootloop: zygote_restart count = %d\n", n);
+        } else LOGI("anti_bootloop: %s count = %d\n", name, n);
 	
-	ztrigger=fopen(TRIGGER_BL, "wb");
+	ztrigger=fopen(filename, "wb");
 	if (ztrigger == NULL) return false; // failed
 	n++; // increase the number
 	fwrite(&n, 1, sizeof(int), ztrigger);
@@ -740,6 +750,6 @@ void zygote_restart(int client) {
     db_settings dbs;
     get_db_settings(dbs, ANTI_BOOTLOOP);
     if (DAEMON_STATE < STATE_BOOT_COMPLETE && dbs[ANTI_BOOTLOOP])
-        if (!check_bootloop()) LOGE("anti_bootloop: cannot run check\n");
+        if (!check_bootloop("zygote_restart",TRIGGER_BL,8)) LOGE("anti_bootloop: cannot run check\n");
     prune_su_access();
 }
