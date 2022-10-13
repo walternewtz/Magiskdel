@@ -60,6 +60,6 @@ void revert_daemon(int pid, int client);
 void revert_unmount(int pid = -1);
 void cleanup_preload();
 
-extern int sys_ui_app_id;
+
 extern std::atomic<bool> denylist_enforced;
 extern std::atomic<bool> hide_whitelist;
