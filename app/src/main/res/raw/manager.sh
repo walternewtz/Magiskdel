@@ -176,7 +176,7 @@ check_boot_ramdisk() {
   $ISAB && return 0
 
   # If we are using legacy SAR, but not A/B, assume we do not have ramdisk
-  if grep ' / ' /proc/mounts | grep -q '/dev/root'; then
+  if grep ' / ' /proc/mounts | grep -q '^/dev/root'; then
     # Override recovery mode to true
     RECOVERYMODE=true
     return 1
@@ -216,7 +216,7 @@ mount_partitions() {
   [ "$(getprop ro.build.ab_update)" = "true" ] && SLOT=$(getprop ro.boot.slot_suffix)
   # Check whether non rootfs root dir exists
   SYSTEM_ROOT=false
-  grep ' / ' /proc/mounts | grep -qv 'rootfs' && SYSTEM_ROOT=true
+  ! is_rootfs && SYSTEM_ROOT=true
 }
 
 get_flags() {
@@ -252,16 +252,7 @@ return 1
 }
 
 unload_magisk(){
-local MAGISKVERCODE="$(magisk -V)"
-if [ ! "$MAGISKVERCODE" -lt "25200" ] && is_delta; then
-    # revert magisk modifications
-    magisk magiskhide --do-unmount 1
-    # stop magisk daemon
-    killall -SIGKILL magiskd
-else
-    # use built-in command, which might cause freeze
     magisk --stop
-fi
 }
 
 
@@ -313,18 +304,19 @@ install_addond(){
     mount -o ro,remount /
     mount -o ro,remount /system
 }
-	
+    
 check_system_magisk(){
     ALLOWSYSTEMINSTALL=true
-    local SYSTEMMODE=false
-    local RUNNING_MAGISK=false
-    if pidof magiskd &>/dev/null && command -v magisk &>/dev/null; then
+    local SHA1 SYSTEMMODE=false
+    if command -v magisk &>/dev/null; then
        local MAGISKTMP="$(magisk --path)/.magisk" || return
+       getvar SHA1
        getvar SYSTEMMODE
-       RUNNING_MAGISK=true
     fi
-    [ -z "$SYSTEMMODE" ] && SYSTEMMODE=false
-    $RUNNING_MAGISK && ! $SYSTEMMODE && ALLOWSYSTEMINSTALL=false
+    # do not allow installing magisk as system mode if Magisk is in boot image
+    [ -z "$SHA1" ] || ALLOWSYSTEMINSTALL=false
+    # allow if SYSTEMMODE=true
+    [ "$SYSTEMMODE" == "true" ] && ALLOWSYSTEMINSTALL=true
 }
 
 clean_hidelist(){

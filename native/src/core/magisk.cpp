@@ -14,6 +14,16 @@
 
 using namespace std;
 
+static void install_applet(const char *path){
+    string s;
+    for (int i = 0; applet_names[i]; ++i){
+        s = string(path) + "/" + string(applet_names[i]);
+        xsymlink("./magisk", s.data());
+    }
+    s = string(path) + "/supolicy";
+    xsymlink("./magiskpolicy", s.data());
+}
+
 [[noreturn]] static void usage() {
     fprintf(stderr,
 R"EOF(Magisk - Multi-purpose Utility
@@ -28,6 +38,7 @@ Options:
    --list                    list all available applets
    --remove-modules          remove all modules and reboot
    --install-module ZIP      install a module zip file
+   --install [PATH]          install applets into PATH
 
 Advanced Options (Internal APIs):
    --daemon                  manually start magisk daemon
@@ -80,6 +91,12 @@ int magisk_main(int argc, char *argv[]) {
     } else if (argv[1] == "--mount-sbin"sv) {
         int ret = mount_sbin();
         return ret;
+    } else if (argv[1] == "--install"sv) {
+        if (argc >= 3)
+            install_applet(argv[2]);
+        else
+            install_applet("/sbin");
+        return 0;
     } else if (argv[1] == "--restorecon"sv) {
         restorecon();
         return 0;
@@ -108,8 +125,7 @@ int magisk_main(int argc, char *argv[]) {
         close(connect_daemon(MainRequest::ZYGOTE_RESTART));
         return 0;
     } else if (argv[1] == "--denylist"sv) {
-    	fprintf(stderr, "Magisk Delta does not support this!\n");
-    	return 1;
+        return 1;
     } else if (argv[1] == "--hide"sv) {
         return denylist_cli(argc - 1, argv + 1);
     } else if (argc >= 3 && argv[1] == "--sqlite"sv) {

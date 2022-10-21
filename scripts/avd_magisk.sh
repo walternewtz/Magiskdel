@@ -19,11 +19,6 @@
 #
 #####################################################################
 
-mount_sbin() {
-  mount -t tmpfs -o 'mode=0755' tmpfs /sbin
-  chcon u:object_r:rootfs:s0 /sbin
-}
-
 mkblknode(){
     local blk_mm="$(mountpoint -d "$2" | sed "s/:/ /g")"
     mknod "$1" -m 666 b $blk_mm
@@ -86,38 +81,14 @@ fi
 MAGISKTMP=/sbin
 
 # Setup bin overlay
-if mount | grep -q rootfs; then
-  # Legacy rootfs
-  mount -o rw,remount /
-  rm -rf /root
-  mkdir /root
-  chmod 750 /root
-  ln /sbin/* /root
-  mount -o ro,remount /
-  mount_sbin
-  ln -s /root/* /sbin
-elif [ -e /sbin ]; then
-  # Legacy SAR
-  mount_sbin
-  mkdir -p /sbin/.magisk/block /sbin/.magisk/mirror/system_root
-  block=/sbin/.magisk/block/system_root
-  mirror=/sbin/.magisk/mirror/system_root
-  mkblknode $block /
-  mount -o ro $block $mirror
-  for file in $mirror/sbin/*; do
-    [ ! -e $file ] && break
-    sfile=/sbin/$(basename $file)
-    if [ -L $file ]; then
-      cp -af $file /sbin
-    elif [ -d $file ]; then
-      mkdir $sfile
-      mount -o bind $file $sfile
-    else
-      touch $sfile
-      mount -o bind $file $sfile
-    fi
-  done
-  umount -l $mirror
+if [ -d /sbin ]; then
+  if $IS64BIT; then
+    chmod 755 ./magisk64
+    ./magisk64 --mount-sbin
+  else
+    chmod 755 ./magisk32
+    ./magisk32 --mount-sbin
+  fi
 else
   # Android Q+ without sbin
   MAGISKTMP=/dev/avd-magisk
@@ -161,5 +132,8 @@ touch $MAGISKTMP/.magisk/config
 $MAGISKTMP/magisk --post-fs-data
 while [ ! -f /dev/.magisk_unblock ]; do sleep 1; done
 rm /dev/.magisk_unblock
+#  allow sepolicy.rule live patch
+touch /dev/.magisk_livepatch 
 start
 $MAGISKTMP/magisk --service
+rm /dev/.magisk_livepatch

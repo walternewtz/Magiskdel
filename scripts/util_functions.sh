@@ -845,6 +845,8 @@ tr -dc A-Za-z0-9 </dev/urandom | head -c $(($FROM+$(($RANDOM%$(($TO-$FROM+1)))))
 magiskrc(){
 local MAGISKTMP="/sbin"
 local SELINUX="$1"
+local pfs_svc="$(random_str 9 16)"
+local ls_svc="$(random_str 9 16)"
 
 local suexec_seclabel="-"
 local seclabel_service="u:r:su:s0"
@@ -860,15 +862,11 @@ cat <<EOF
 
 on post-fs-data
     start logd
-    start adbd
     exec $suexec_seclabel root root -- $MAGISKSYSTEMDIR/$magisk_name --mount-sbin
     copy $MAGISKSYSTEMDIR/magisk64 $MAGISKTMP/magisk64
     chmod 0755 $MAGISKTMP/magisk64
     symlink ./$magisk_name $MAGISKTMP/magisk
-    symlink ./magisk $MAGISKTMP/su
-    symlink ./magisk $MAGISKTMP/resetprop
-    symlink ./magisk $MAGISKTMP/magiskhide
-    symlink ./magiskpolicy $MAGISKTMP/supolicy
+    exec $suexec_seclabel root root -- $MAGISKSYSTEMDIR/$magisk_name --install
     copy $MAGISKSYSTEMDIR/magisk32 $MAGISKTMP/magisk32
     chmod 0755 $MAGISKTMP/magisk32
     copy $MAGISKSYSTEMDIR/magiskinit $MAGISKTMP/magiskinit
@@ -883,11 +881,21 @@ on post-fs-data
     mkdir $MAGISKTMP/.magisk/block 700
     copy $MAGISKSYSTEMDIR/config $MAGISKTMP/.magisk/config
     rm /dev/.magisk_unblock
-    exec $seclabel_exec root root -- $MAGISKTMP/magisk --post-fs-data
+    start $pfs_svc
     wait /dev/.magisk_unblock 40
     rm /dev/.magisk_unblock
     rm /dev/.magisk_livepatch
-    exec $seclabel_exec root root -- $MAGISKTMP/magisk --service
+
+service $pfs_svc $MAGISKTMP/magisk --post-fs-data
+    user root
+    seclabel $seclabel_exec
+    oneshot
+
+service $ls_svc $MAGISKTMP/magisk --service
+    class late_start
+    user root
+    seclabel $seclabel_exec
+    oneshot
 
 on property:sys.boot_completed=1
     mkdir /data/adb/magisk 755
@@ -1040,33 +1048,7 @@ direct_install_system(){
     print_title "Powered by Magisk"
     api_level_arch_detect
     local INSTALLDIR="$1"
-    local SYSTEMMODE=false
-    local RUNNING_MAGISK=false
     local vphonegaga_titan=false
-    if pidof magiskd &>/dev/null && command -v magisk &>/dev/null; then
-       local MAGISKTMP="$(magisk --path)/.magisk"
-       getvar SYSTEMMODE
-       RUNNING_MAGISK=true
-    fi
-    [ -z "$SYSTEMMODE" ] && SYSTEMMODE=false
-
-    # if Magisk is running, not system mode and trigger file not found
-    if $RUNNING_MAGISK && ! $SYSTEMMODE && [ ! -f /dev/.magisk_systemmode_allow ]; then
-        ui_print "[!] Magisk (maybe) is installed into boot image"
-        ui_print ""
-        ui_print "  This option should be used for emulator only!"
-        ui_print ""
-        ui_print "  If you still want to install Magisk in /system"
-        ui_print "  make sure:"
-        ui_print "    + Magisk is not installed in boot image"
-        ui_print "    + Boot image is restored to stock"
-        ui_print ""
-        sleep 3
-        ui_print "! Press install again if you definitely did the above"
-        rm -rf /dev/.magisk_systemmode_allow
-        touch /dev/.magisk_systemmode_allow
-        return 1
-    fi
         
     ui_print "- Remount system partition as read-write"
     local MIRRORDIR="/dev/sysmount_mirror" ROOTDIR SYSTEMDIR VENDORDIR
@@ -1131,11 +1113,11 @@ direct_install_system(){
     for magisk in $magisk_applet magiskpolicy magiskinit; do
         cat "$INSTALLDIR/$magisk" >"$MIRRORDIR$MAGISKSYSTEMDIR/$magisk" || { ui_print "! Unable to write Magisk binaries to system"; cleanup_system_installation; return 1; }
     done
+    echo -e "SYSTEMMODE=true\nRECOVERYMODE=false" >"$MIRRORDIR$MAGISKSYSTEMDIR/config"
+    chcon -R u:object_r:system_file:s0 "$MIRRORDIR$MAGISKSYSTEMDIR"
+    chmod -R 700 "$MIRRORDIR$MAGISKSYSTEMDIR"
 
     if [ "$API" -gt 24 ]; then
-        echo -e "SYSTEMMODE=true\nRECOVERYMODE=false" >"$MIRRORDIR$MAGISKSYSTEMDIR/config"
-        chcon -R u:object_r:system_file:s0 "$MIRRORDIR$MAGISKSYSTEMDIR"
-        chmod -R 700 "$MIRRORDIR$MAGISKSYSTEMDIR"
 
         # test live patch
         local SELINUX=true
@@ -1205,39 +1187,39 @@ direct_install_system(){
 #!/system/etc/init/magisk/busybox sh
 set -o standalone
 setenforce 0
-if ! pidof magiskd &>/dev/null; then
-{
-    mount -o rw,remount /
-    mkdir /sbin
-    rm -rf /root
-    mkdir /root
-    ln /sbin/* /root
-    umount -l /sbin
-    mount -t tmpfs tmpfs /sbin
-    ln -fs /root/* /sbin
-    mount -o ro,remount /
+setup_magisk(){
+    "$MAGISKSYSTEMDIR/$magisk_name" --mount-sbin
     cp -af "$MAGISKSYSTEMDIR/magisk64" /sbin/magisk64
     cp -af "$MAGISKSYSTEMDIR/magisk32" /sbin/magisk32
     cp -af "$MAGISKSYSTEMDIR/magiskinit" /sbin/magiskinit
     cp -af "$MAGISKSYSTEMDIR/magiskpolicy" /sbin/magiskpolicy
     chmod 755 /sbin/magisk64 /sbin/magisk32 /sbin/magiskpolicy /sbin/magiskinit
     ln -s ./$magisk_name /sbin/magisk
-    ln -s ./magisk /sbin/su
-    ln -s ./magisk /sbin/magiskhide
-    ln -s ./magisk /sbin/resetprop
-    ln -s ./magiskpolicy /sbin/supolicy
+    /sbin/magisk --install
     /sbin/magiskinit -x manager /sbin/stub.apk
     mkdir -p /sbin/.magisk/mirror
     mkdir -p /sbin/.magisk/block
     echo -e "SYSTEMMODE=true\nRECOVERYMODE=false" >/sbin/.magisk/config
     # run magisk daemon
     /sbin/magisk --post-fs-data
-    while [ ! -f /dev/.magisk_unblock ]; do sleep 1; done
+	i=0
+    while [ ! -f /dev/.magisk_unblock ]; do
+        i=\$((\$i+1))
+		if [ "\$i" -gt 40 ]; then
+            break
+        fi
+        sleep 1;
+    done
     rm -rf /dev/.magisk_unblock
+    mount --bind /system/bin/app_process.orig "\$(realpath "\$0")"
     /sbin/magisk --service
-} 2>/dev/null
-fi
-exec /system/bin/app_process.orig "\$@"
+    (
+      while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 1; done
+      /sbin/magisk --boot-complete
+    ) &
+} 
+
+setup_magisk; exec /system/bin/app_process.orig "\$@"
 EOF
         chmod 755 "$MIRRORDIR/system/bin/app_process"
     fi
