@@ -650,7 +650,11 @@ void magic_mount() {
 
     if (!system->is_empty()) {
         // Handle special read-only partitions
-        for (const char *part : { "/vendor", "/product", "/system_ext" }) {
+        for (const char *part : { "/vendor", "/product", "/system_ext", 
+            "/my_carrier", "my_company", "/my_engineering",
+            "/my_heytap", "/my_preload", "/my_product",
+            "/my_region", "/my_stock", "/prism",
+            "/optics", "/odm", "/my_manifest" }) {
             struct stat st{};
             if (lstat(part, &st) == 0 && S_ISDIR(st.st_mode)) {
                 if (auto old = system->extract(part + 1)) {

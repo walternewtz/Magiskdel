@@ -38,7 +38,12 @@ void revert_unmount(int pid){
     // Unmount dummy skeletons and MAGISKTMP
     targets.push_back(MAGISKTMP);
     parse_mnt("/proc/self/mounts", [&](mntent *mentry) {
-        if (TMPFS_MNT(system) || TMPFS_MNT(vendor) || TMPFS_MNT(product) || TMPFS_MNT(system_ext))
+        if (TMPFS_MNT(system) || TMPFS_MNT(vendor) || TMPFS_MNT(product) ||
+            TMPFS_MNT(system_ext) || TMPFS_MNT(my_carrier) || TMPFS_MNT(my_company) ||
+            TMPFS_MNT(my_heytap) || TMPFS_MNT(my_preload) || TMPFS_MNT(my_product) ||
+            TMPFS_MNT(my_region) || TMPFS_MNT(my_stock) || TMPFS_MNT(my_manifest) ||
+            TMPFS_MNT(prism) || TMPFS_MNT(optics) || TMPFS_MNT(odm) ||
+            TMPFS_MNT(my_engineering))
             targets.emplace_back(mentry->mnt_dir);
         return true;
     });
