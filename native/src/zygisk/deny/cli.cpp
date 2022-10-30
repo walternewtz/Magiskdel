@@ -8,6 +8,8 @@
 
 #include "deny.hpp"
 
+#define hide_version 1
+
 using namespace std;
 
 [[noreturn]] static void usage() {
@@ -16,6 +18,7 @@ R"EOF(MagiskHide Config CLI
 
 Usage: magiskhide [action [arguments...] ]
 Actions:
+   version         Print MagiskHide version
    status          Return the MagiskHide status
    enable          Enable MagiskHide
    disable         Disable MagiskHide
@@ -34,6 +37,10 @@ Magisk Delta specific Actions:
    --do-unmount [PID...]
                    Unmount all Magisk modifications
                    directly [in another namespace...]
+   --monitor [enable|disable]
+                   Enable or disable MagiskHide monitor
+   --check PID     Manually check target and do unmount
+
 
 )EOF");
     exit(1);
@@ -70,6 +77,20 @@ void denylist_handler(int client, const sock_cred *cred) {
     case DenyRequest::LIST:
         ls_list(client);
         return;
+    case DenyRequest::START_MONITOR:
+        enable_monitor();
+        res = DenyResponse::OK;
+        break;
+    case DenyRequest::STOP_MONITOR:
+        disable_monitor();
+        res = DenyResponse::OK;
+        break;
+    case DenyRequest::CHECK_PID:
+        if (denylist_enforced) {
+            do_check_pid(client);
+        }
+        res = DenyResponse::OK;
+        break;
     case DenyRequest::STATUS:
         if (denylist_enforced){
         	if (hide_whitelist) res = DenyResponse::WHITELIST_ENFORCED;
@@ -105,6 +126,15 @@ int denylist_cli(int argc, char **argv) {
         req = DenyRequest::BLACKLIST;
     else if (argv[1] == "whitelist"sv)
         req = DenyRequest::WHITELIST;
+    else if (argv[1] == "version"sv) {
+        printf("MAGISKHIDE:%d\n", hide_version);
+        return 0;
+    } else if (argc > 2 && argv[1] == "--check"sv)
+        req = DenyRequest::CHECK_PID;
+    else if (argc > 2 && argv[1] == "--monitor"sv && argv[2] == "enable"sv)
+        req = DenyRequest::START_MONITOR;
+    else if (argc > 2 && argv[1] == "--monitor"sv && argv[2] == "disable"sv)
+        req = DenyRequest::STOP_MONITOR;
     else if (argv[1] == "--do-unmount"sv) {
         int fd = connect_daemon(MainRequest::GET_PATH);
         MAGISKTMP = read_string(fd);
@@ -135,6 +165,8 @@ int denylist_cli(int argc, char **argv) {
     if (req == DenyRequest::ADD || req == DenyRequest::REMOVE) {
         write_string(fd, argv[2]);
         write_string(fd, argv[3] ? argv[3] : "");
+    } else if (req == DenyRequest::CHECK_PID) {
+        write_int(fd, atoi(argv[2]));
     }
 
     // Get response

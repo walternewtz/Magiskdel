@@ -50,12 +50,15 @@ atomic<bool> denylist_enforced = false;
 
 atomic<bool> hide_whitelist = false;
 
+atomic<bool> do_monitor = true;
+
 extern bool uid_granted_root(int uid);
 
 // Process monitoring
 pthread_t monitor_thread;
 void proc_monitor();
 static pstream ps_a, ps_b;
+static bool monitoring = false;
 
 static void kill_pipe(){
     ps_a.term();
@@ -290,6 +293,11 @@ int add_list(int client) {
     return add_list(pkg.data(), proc.data());
 }
 
+void do_check_pid(int client){
+    int pid = read_int(client);
+    do_check_fork(pid);
+}
+
 static int rm_list(const char *pkg, const char *proc) {
     {
         mutex_guard lock(data_lock);
@@ -431,12 +439,13 @@ int enable_deny(bool props) {
             denylist_enforced = false;
             return DenyResponse::ERROR;
         }
-        if (!zygisk_enabled) {
+        if (!zygisk_enabled && do_monitor) {
             auto ret1 = new_daemon_thread(&proc_monitor);
             if (ret1){
                 // cannot start monitor_proc, return daemon error
                 return DenyResponse::ERROR;
             }
+            monitoring = true;
         }
 
         // On Android Q+, also kill blastula pool and all app zygotes
@@ -452,13 +461,30 @@ int enable_deny(bool props) {
     return DenyResponse::OK;
 }
 
+void enable_monitor(){
+	if (do_monitor) return;
+	do_monitor = true;
+	LOGI("* Enable proc_monitor\n");
+}
+
+void disable_monitor(){
+	if (!do_monitor) return;
+    do_monitor = false;
+    LOGI("* Disable proc_monitor\n");
+    if (monitoring) {
+        pthread_kill(monitor_thread, SIGTERMTHRD);
+        monitoring = false;
+    }
+}
+
 int disable_deny() {
     if (denylist_enforced) {
         denylist_enforced = false;
         LOGI("* Disable MagiskHide\n");
     }
-    if (!zygisk_enabled) {
+    if (!zygisk_enabled && monitoring) {
         pthread_kill(monitor_thread, SIGTERMTHRD);
+        monitoring = false;
     }
     update_deny_config();
 

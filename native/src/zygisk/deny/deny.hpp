@@ -21,6 +21,9 @@ enum : int {
     STATUS,
     WHITELIST,
     BLACKLIST,
+    START_MONITOR,
+    STOP_MONITOR,
+    CHECK_PID,
 
     END
 };
@@ -59,7 +62,14 @@ void crawl_procfs(const std::function<bool(int)> &fn);
 void revert_daemon(int pid, int client);
 void revert_unmount(int pid = -1);
 void cleanup_preload();
+void do_check_fork(int pid);
+void do_check_pid(int client);
+
+//Event
+void disable_monitor();
+void enable_monitor();
 
 
 extern std::atomic<bool> denylist_enforced;
 extern std::atomic<bool> hide_whitelist;
+extern std::atomic<bool> do_monitor;
