@@ -261,6 +261,16 @@ mount_ro_ensure() {
   is_mounted $POINT || abort "! Cannot mount $POINT"
 }
 
+mount_ro_not_ensure() {
+  # We handle ro partitions only in recovery
+  $BOOTMODE && return 0
+  local PART=$1
+  local POINT=$2
+  mount_name "$PART" $POINT '-o ro'
+  is_mounted $POINT ||  { ui_print "WARNING: Cannot mount $POINT, skipped"; return 1; }
+  return 0
+}
+
 mount_partitions() {
   # Check A/B slot
   SLOT=`grep_cmdline androidboot.slot_suffix`
@@ -275,26 +285,28 @@ mount_partitions() {
     umount /system 2&>/dev/null
     umount /system_root 2&>/dev/null
   fi
-  mount_ro_ensure "system$SLOT app$SLOT" /system
-  if [ -f /system/init -o -L /system/init ]; then
-    SYSTEM_ROOT=true
-    setup_mntpoint /system_root
-    if ! mount --move /system /system_root; then
-      umount /system
-      umount -l /system 2>/dev/null
-      mount_ro_ensure "system$SLOT app$SLOT" /system_root
-    fi
-    mount -o bind /system_root/system /system
-  else
-    SYSTEM_ROOT=false
-    grep ' / ' /proc/mounts | grep -qv 'rootfs' || grep -q ' /system_root ' /proc/mounts && SYSTEM_ROOT=true
-  fi
-  # /vendor is used only on some older devices for recovery AVBv1 signing so is not critical if fails
-  [ -L /system/vendor ] && mount_name vendor$SLOT /vendor '-o ro'
-  $SYSTEM_ROOT && ui_print "- Device is system-as-root"
 
-  # Allow /system/bin commands (dalvikvm) on Android 10+ in recovery
-  $BOOTMODE || mount_apex
+  if mount_ro_not_ensure "system$SLOT app$SLOT" /system; then
+    if [ -f /system/init -o -L /system/init ]; then
+      SYSTEM_ROOT=true
+      setup_mntpoint /system_root
+      if ! mount --move /system /system_root; then
+        umount /system
+        umount -l /system 2>/dev/null
+        mount_ro_ensure "system$SLOT app$SLOT" /system_root
+      fi
+      mount -o bind /system_root/system /system
+    else
+      SYSTEM_ROOT=false
+      grep ' / ' /proc/mounts | grep -qv 'rootfs' || grep -q ' /system_root ' /proc/mounts && SYSTEM_ROOT=true
+    fi
+    # /vendor is used only on some older devices for recovery AVBv1 signing so is not critical if fails
+    [ -L /system/vendor ] && mount_name vendor$SLOT /vendor '-o ro'
+    $SYSTEM_ROOT && ui_print "- Device is system-as-root"
+
+    # Allow /system/bin commands (dalvikvm) on Android 10+ in recovery
+    $BOOTMODE || mount_apex
+  fi
 
   # Mount sepolicy rules dir locations in recovery (best effort)
   if ! $BOOTMODE; then
