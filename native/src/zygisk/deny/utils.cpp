@@ -32,6 +32,8 @@ using namespace std;
 
 atomic_flag skip_pkg_rescan;
 
+atomic_flag *p_skip_pkg_rescan = &skip_pkg_rescan;
+
 // For the following data structures:
 // If package name == ISOLATED_MAGIC, or app ID == -1, it means isolated service
 
@@ -59,6 +61,7 @@ pthread_t monitor_thread;
 void proc_monitor();
 static pstream ps_a, ps_b;
 static bool monitoring = false;
+static int fork_pid = 0;
 
 static void kill_pipe(){
     ps_a.term();
@@ -72,7 +75,7 @@ static void fflush_logcat(){
 #define do_kill (denylist_enforced)
 
 static void rescan_apps() {
-    //LOGD("hide: rescanning apps\n");
+    LOGD("hide: rescanning apps\n");
 
     app_id_to_pkgs.clear();
 
@@ -293,11 +296,6 @@ int add_list(int client) {
     return add_list(pkg.data(), proc.data());
 }
 
-void do_check_pid(int client){
-    int pid = read_int(client);
-    do_check_fork(pid);
-}
-
 static int rm_list(const char *pkg, const char *proc) {
     {
         mutex_guard lock(data_lock);
@@ -515,7 +513,7 @@ bool is_deny_target(int uid, string_view process, int max_len) {
     if (!ensure_data())
         return false;
 
-    if (!skip_pkg_rescan.test_and_set())
+    if (!p_skip_pkg_rescan->test_and_set())
         rescan_apps();
 
     int app_id = to_app_id(uid);
@@ -703,11 +701,7 @@ static bool zombie_pid(int pid) {
 }
 
 static bool is_zygote_done() {
-#ifdef __LP64__
-    return zygote_map.size() >= 2;
-#else
     return zygote_map.size() >= 1;
-#endif
 }
 
 
@@ -829,6 +823,8 @@ static void term_thread(int) {
     attaches.reset();
     close(inotify_fd);
     inotify_fd = -1;
+    fork_pid = 0;
+    kill_pipe();
     // Restore all signal handlers that was set
     sigset_t set;
     sigfillset(&set);
@@ -839,7 +835,6 @@ static void term_thread(int) {
     sigaction(SIGIO, &act, nullptr);
     sigaction(SIGALRM, &act, nullptr);
     LOGD("proc_monitor: terminate\n");
-    kill_pipe();
     pthread_exit(nullptr);
 }
 
@@ -947,8 +942,7 @@ check_and_hide:
     LOGI("proc_monitor: [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
 
     // hide magisk
-    revert_unmount(pid);
-    kill(pid, SIGCONT);
+    revert_daemon(pid);
     return true;
 
 not_target:
@@ -986,17 +980,24 @@ static void new_zygote(int pid) {
 
 #define DETACH_AND_CONT { detach_pid(pid); continue; }
 
-void do_check_fork(int pid) {
-    if (fork_dont_care() == 0) {
-        int i=0;
-        // zygote child process need a mount of time to seperate mount namespace
-        while (!check_pid(pid)){
-            if (i>=300000) break;
-            i++;
-            usleep(10);
-        }
-        _exit(0);
+void do_check_fork() {
+    int pid = fork_pid;
+    fork_pid = 0;
+    if (pid == 0)
+        return;
+    int i=0;
+    // zygote child process need a mount of time to seperate mount namespace
+    while (!check_pid(pid)){
+        if (i>=300000) break;
+        i++;
+        usleep(10);
     }
+}
+
+void do_check_pid(int client){
+    int pid = read_int(client);
+    fork_pid = pid;
+    new_daemon_thread(&do_check_fork);
 }
 
 void proc_monitor() {
@@ -1110,7 +1111,8 @@ void proc_monitor() {
         // zygote fork event detected, check if this is target app
         //LOGD("proc_monitor: zygote new fork PID=[%s]\n", pid);
         // fork new process, check pid and do revert unmount
-        do_check_fork(atoi(pid));
+        fork_pid = atoi(pid);
+        new_daemon_thread(&do_check_fork);
     }
     
     am_proc_start:
@@ -1152,6 +1154,7 @@ void proc_monitor() {
         // zygote fork event detected, check if this is target app
         //LOGD("proc_monitor: zygote new fork PID=[%s]\n", pid);
         // fork new process, check pid and do revert unmount
-        do_check_fork(p);
+        fork_pid = p;
+        new_daemon_thread(&do_check_fork);
     }
 }

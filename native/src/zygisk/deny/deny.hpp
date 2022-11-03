@@ -59,10 +59,9 @@ bool is_deny_target(int uid, std::string_view process, int max_len = 1024);
 void crawl_procfs(const std::function<bool(int)> &fn);
 
 // Revert
-void revert_daemon(int pid, int client);
+void revert_daemon(int pid, int client = -1);
 void revert_unmount(int pid = -1);
 void cleanup_preload();
-void do_check_fork(int pid);
 void do_check_pid(int client);
 
 //Event
