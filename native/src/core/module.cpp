@@ -17,8 +17,11 @@
 
 using namespace std;
 
-#define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
-#define DVLOGD(tag, target) LOGD("%-8s: %s\n", tag, target)
+static bool log_enabled = true;
+
+#define VLOGD(tag, from, to) if (log_enabled) LOGD("%-8s: %s <- %s\n", tag, to, from)
+
+#define DVLOGD(tag, target) if (log_enabled) LOGD("%-8s: %s\n", tag, target)
 
 #define TYPE_MIRROR  (1 << 0)    /* mount from mirror */
 #define TYPE_INTER   (1 << 1)    /* intermediate node */
@@ -35,6 +38,7 @@ class mirror_node;
 class tmpfs_node;
 class module_node;
 class root_node;
+
 
 template<class T> static bool isa(node_entry *node);
 static int bind_mount(const char *from, const char *to) {
@@ -674,6 +678,24 @@ void magic_mount() {
         mount_zygisk(32)
         mount_zygisk(64)
     }
+    log_enabled = false;
+}
+
+void su_mount() {
+    node_entry::mirror_dir = MAGISKTMP + "/" MIRRDIR;
+
+    auto root = make_unique<root_node>("");
+    auto system = new root_node("system");
+    root->insert(system);
+    
+    if (MAGISKTMP != "/sbin" || !check_envpath("/sbin")) {
+        // Need to inject our binaries into /system/bin
+        LOGD("su_mount: /system/bin <- magisk\n");
+        inject_magisk_bins(system);
+    }
+
+    root->prepare();
+    root->mount();
 }
 
 void prepare_modules() {

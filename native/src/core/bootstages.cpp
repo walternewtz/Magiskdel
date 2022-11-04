@@ -46,28 +46,13 @@ static bool is_rootfs()
 
 bool check_bootloop(const char *name, const char *filename, int max);
 
-static int bind_mount(const char *from, const char *to) {
-    int ret = xmount(from, to, nullptr, MS_BIND, nullptr);
-    if (ret == 0)
-        VLOGD("bind_mnt", from, to);
-    return ret;
-}
-
-static int tmpfs_mount(const char *from, const char *to){
-    int ret = xmount(from, to, "tmpfs", 0, "mode=755");
-    if (ret == 0)
-        VLOGD("mnt_tmp", "tmpfs", to);
-    return ret;
-}
-
-
-
 using namespace std;
 
 static const char *F2FS_SYSFS_PATH = nullptr;
 
 static bool safe_mode = false;
 bool zygisk_enabled = false;
+bool sulist_enabled = false;
 
 /*********
  * Setup *
@@ -150,7 +135,7 @@ static void recreate_sbin(const char *mirror, bool use_bind_mount) {
                 else
                     close(xopen(sbin_path.data(), O_CREAT | O_WRONLY | O_CLOEXEC, mode));
 
-                bind_mount(buf, sbin_path.data());
+                bind_mount_(buf, sbin_path.data());
             } else {
                 xsymlink(buf, sbin_path.data());
                 VLOGD("create", buf, sbin_path.data());
@@ -372,43 +357,21 @@ void unlock_blocks() {
 
 int mount_sbin(){
     if (is_rootfs()){
-        mkdir("/sbin", 0750);
-        if (xmount(nullptr, "/", nullptr, MS_REMOUNT, nullptr) != 0) return -1;
-        rm_rf("/sbin_mirror");
-        mkdir("/sbin_mirror", 0777);
-        clone_attr("/sbin", "/sbin_mirror");
-        link_path("/sbin", "/sbin_mirror");
         if (tmpfs_mount("tmpfs", "/sbin") != 0) return -1;
         setfilecon("/sbin", "u:object_r:rootfs:s0");
-        recreate_sbin("/sbin_mirror", true);
-        rm_rf("/sbin_mirror");
-        xmount(nullptr, "/", nullptr, MS_REMOUNT | MS_RDONLY, nullptr);
+        xmkdir("/sbin/" INTLROOT, 0755);
+        xmkdir("/sbin/" MIRRDIR, 0755);
+        xmkdir("/sbin/" MIRRDIR "/rootfs", 0755);
+        xmount("/", "/sbin/" MIRRDIR "/rootfs", nullptr, MS_BIND, nullptr);
+        recreate_sbin("/sbin/" MIRRDIR "/rootfs/sbin", true);
+        umount2("/sbin/" MIRRDIR "/rootfs", MNT_DETACH);
     } else {
         if (tmpfs_mount("tmpfs", "/sbin") != 0) return -1;
         setfilecon("/sbin", "u:object_r:rootfs:s0");
         xmkdir("/sbin/" INTLROOT, 0755);
-        xmkdir("/sbin/" BLOCKDIR, 0755);
         xmkdir("/sbin/" MIRRDIR, 0755);
-        parse_mnt("/proc/mounts", [&](mntent *me) {
-            struct stat st{};
-            if ((me->mnt_dir == string_view("/")) && me->mnt_type != "tmpfs"sv && 
-            me->mnt_type != "rootfs"sv && me->mnt_type != "overlay"sv &&
-            stat("/", &st) == 0) {
-                mknod("/sbin/" BLOCKDIR "/system_root", S_IFBLK | 0600, st.st_dev);
-                xmkdir("/sbin/" MIRRDIR "/system_root", 0755);
-                int flags = 0;                  
-                auto opts = split_ro(me->mnt_opts, ",");
-                for (string_view s : opts) {    
-                    if (s == "ro") {            
-                        flags |= MS_RDONLY;     
-                        break;                  
-                    }                           
-                } 
-                xmount("/sbin/" BLOCKDIR "/system_root", "/sbin/" MIRRDIR "/system_root", me->mnt_type, flags, nullptr);
-                return false;
-            }
-            return true;
-        });
+        xmkdir("/sbin/" MIRRDIR "/system_root", 0755);
+        xmount("/", "/sbin/" MIRRDIR "/system_root", nullptr, MS_BIND, nullptr);
         recreate_sbin("/sbin/" MIRRDIR "/system_root/sbin", true);
         umount2("/sbin/" MIRRDIR "/system_root", MNT_DETACH);
     }
@@ -657,7 +620,12 @@ void post_fs_data(int client) {
             exec_common_scripts("post-fs-data");
         }
         get_db_settings(dbs, ZYGISK_CONFIG);
+        get_db_settings(dbs, WHITELIST_CONFIG);
+        get_db_settings(dbs, DENYLIST_CONFIG);
+
         zygisk_enabled = dbs[ZYGISK_CONFIG];
+        // sulist mode does not support zygisk
+        sulist_enabled = dbs[DENYLIST_CONFIG] && dbs[WHITELIST_CONFIG] && !zygisk_enabled;
         initialize_denylist();
         if (core_only(false)) prepare_modules();
 		else handle_modules();

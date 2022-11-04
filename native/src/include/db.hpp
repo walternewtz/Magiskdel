@@ -40,7 +40,7 @@ constexpr const char *DB_SETTING_KEYS[] = {
     "mnt_ns",
     "hide",
     "zygisk",
-    "hide_whitelist",
+    "sulist",
     "anti_bootloop"
 };
 

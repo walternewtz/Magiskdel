@@ -264,6 +264,13 @@
     <string name="settings_clean_hidelist_title">Clean up hide list</string>
     <string name="settings_clean_hidelist_summary">Remove all non-existing and uninstalled apps from hidelist</string>
     <string name="settings_clean_hidelist_toast">Hidelist is now clean</string>
-
+    <string name="settings_sulist_title">Enforce SuList</string>
+    <string name="settings_sulist">SuList</string>
+    <string name="settings_sulist_summary">Magisk is only visible for processes on sulist</string>
+    <string name="settings_sulist_config_title">Configure SuList</string>
+    <string name="settings_sulist_config_summary">Select the processes to be included on the sulist</string>
+    <string name="settings_sulist_error_zygisk">This feature cannot coexist with zygisk</string>
+    <string name="settings_sulist_error_magiskhide">This feature need MagiskHide to be enabled</string>
+    <string name="settings_sulist_enforced">SuList is enforced</string>
 
 </resources>

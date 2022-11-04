@@ -44,7 +44,7 @@ object Config : PreferenceConfig, DBConfig {
         const val DENYLIST = "hide"
         const val SU_MANAGER = "requester"
         const val KEYSTORE = "keystore"
-        const val WHITELIST = "hide_whitelist"
+        const val SULIST = "sulist"
         const val ANTIBOOTLOOP = "anti_bootloop"
 
         // prefs
@@ -166,7 +166,7 @@ object Config : PreferenceConfig, DBConfig {
     var suBiometric by dbSettings(Key.SU_BIOMETRIC, false)
     var zygisk by dbSettings(Key.ZYGISK, false)
     var denyList by BoolDBPropertyNoWrite(Key.DENYLIST, false)
-    var whiteList by BoolDBPropertyNoWrite(Key.WHITELIST, false)
+    var sulist by BoolDBPropertyNoWrite(Key.SULIST, false)
     var antiBLoop by BoolDBPropertyNoWrite(Key.ANTIBOOTLOOP, false)
     var suManager by dbStrings(Key.SU_MANAGER, "", true)
     var keyStoreRaw by dbStrings(Key.KEYSTORE, "", true)

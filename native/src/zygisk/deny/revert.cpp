@@ -3,7 +3,9 @@
 #include <unistd.h>
 
 #include <magisk.hpp>
+#include <daemon.hpp>
 #include <base.hpp>
+#include <selinux.hpp>
 
 #include "deny.hpp"
 
@@ -18,12 +20,106 @@ static void lazy_unmount(const char* mountpoint) {
 
 #define TMPFS_MNT(dir) (mentry->mnt_type == "tmpfs"sv && str_starts(mentry->mnt_dir, "/" #dir))
 
+void root_mount(int pid) {
+    if (switch_mnt_ns(pid))
+        return;
+
+    LOGD("su_policy: handling PID=[%d]\n", pid);
+
+    xmount(nullptr, "/", nullptr, MS_PRIVATE | MS_REC, nullptr);
+
+    if (MAGISKTMP == "/sbin") {
+        mount_sbin();
+    } else {
+        mkdir(MAGISKTMP.data(),0755);
+        tmpfs_mount("tmpfs", MAGISKTMP.data());
+    }
+
+    chdir(MAGISKTMP.data());
+
+    xmkdir(INTLROOT, 0755);
+    xmkdir(MIRRDIR, 0);
+    xmkdir(BLOCKDIR, 0);
+
+    for (auto file : {"magisk32", "magisk64", "magisk", "magiskpolicy"}) {
+        auto src = "/proc/1/root"s + MAGISKTMP + "/"s + file;
+        auto dest = MAGISKTMP + "/"s + file;
+        if (access(src.data(),F_OK) == 0){
+            cp_afc(src.data(), dest.data());
+            setfilecon(dest.data(), "u:object_r:" SEPOL_EXEC_TYPE ":s0");
+        }
+    }
+    
+    for (int i = 0; applet_names[i]; ++i) {
+        string dest = MAGISKTMP + "/" + applet_names[i];
+        xsymlink("./magisk", dest.data());
+    }
+    string dest = MAGISKTMP + "/supolicy";
+    xsymlink("./magiskpolicy", dest.data());
+
+    parse_mnt("/proc/mounts", [&](mntent *me) {
+        struct stat st{};
+        if ((me->mnt_dir == string_view("/system")) && me->mnt_type != "tmpfs"sv && 
+            me->mnt_type != "rootfs"sv && me->mnt_type != "overlay"sv &&
+            stat("/", &st) == 0) {
+            mknod(BLOCKDIR "/system", S_IFBLK | 0600, st.st_dev);
+            xmkdir(MIRRDIR "/system", 0755);
+            int flags = 0;                  
+            auto opts = split_ro(me->mnt_opts, ",");
+            for (string_view s : opts) {    
+                if (s == "ro") {            
+                    flags |= MS_RDONLY;     
+                    break;                  
+                }                           
+            } 
+            xmount(BLOCKDIR "/system", MIRRDIR "/system", me->mnt_type, flags, nullptr);
+            return false;
+        }
+        return true;
+    });
+    if (access(MIRRDIR "/system", F_OK) != 0) {
+        xsymlink("./system_root/system", MIRRDIR "/system");
+        parse_mnt("/proc/mounts", [&](mntent *me) {
+            struct stat st{};
+            if ((me->mnt_dir == string_view("/")) && me->mnt_type != "tmpfs"sv && 
+                me->mnt_type != "rootfs"sv && me->mnt_type != "overlay"sv &&
+                stat("/", &st) == 0) {
+                mknod(BLOCKDIR "/system_root", S_IFBLK | 0600, st.st_dev);
+                xmkdir(MIRRDIR "/system_root", 0755);
+                int flags = 0;                  
+                auto opts = split_ro(me->mnt_opts, ",");
+                for (string_view s : opts) {    
+                    if (s == "ro") {            
+                        flags |= MS_RDONLY;     
+                        break;                  
+                    }                           
+                } 
+                xmount(BLOCKDIR "/system_root", MIRRDIR "/system_root", me->mnt_type, flags, nullptr);
+                return false;
+            }
+            return true;
+        });
+    }
+
+    chdir("/");
+    su_mount();
+}
+
+void su_daemon(int pid) {
+    if (fork_dont_care() == 0) {
+        root_mount(pid);
+        // Send resume signal
+        kill(pid, SIGCONT);
+        _exit(0);
+    }
+}
+
 void revert_daemon(int pid, int client) {
     if (fork_dont_care() == 0) {
         revert_unmount(pid);
-        if (client != -1) {
+        if (client >= 0) {
             write_int(client, 0);
-        } else {
+        } else if (client == -1) {
             // send resume signal
             kill(pid, SIGCONT);
         }

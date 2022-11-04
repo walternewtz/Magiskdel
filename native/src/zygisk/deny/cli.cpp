@@ -8,7 +8,7 @@
 
 #include "deny.hpp"
 
-#define hide_version 1
+#define hide_version 2
 
 using namespace std;
 
@@ -18,28 +18,24 @@ R"EOF(MagiskHide Config CLI
 
 Usage: magiskhide [action [arguments...] ]
 Actions:
-   version         Print MagiskHide version
    status          Return the MagiskHide status
+   sulist          Return the SuList status
    enable          Enable MagiskHide
    disable         Disable MagiskHide
-   add PKG [PROC]  Add a new target to the hidelist
-   rm PKG [PROC]   Remove target(s) from the hidelist
-   ls              Print the current hidelist
+   add PKG [PROC]  Add a new target to the hidelist (sulist)
+   rm PKG [PROC]   Remove target(s) from the hidelist (sulist)
+   ls              Print the current hidelist (sulist)
    exec CMDs...    Execute commands in isolated mount
                    namespace and do all unmounts
 
 Magisk Delta specific Actions:
-   blacklist       Normal MagiskHide mode (default)
-                   apps on hidelist will be targeted
-   whitelist       Enable MagiskHideAll mode
-                   apps are not granted Magisk superuser
-                   will be targeted
+   version         Print MagiskHide version
    --do-unmount [PID...]
                    Unmount all Magisk modifications
                    directly [in another namespace...]
    --monitor [enable|disable]
                    Enable or disable MagiskHide monitor
-   --check PID     Manually check target and do unmount
+   --check PID     Manually trigger MagiskHide/SuList
 
 
 )EOF");
@@ -61,12 +57,6 @@ void denylist_handler(int client, const sock_cred *cred) {
         break;
     case DenyRequest::DISABLE:
         res = disable_deny();
-        break;
-    case DenyRequest::WHITELIST:
-        res = enable_whitelist();
-        break;
-    case DenyRequest::BLACKLIST:
-        res = disable_whitelist();
         break;
     case DenyRequest::ADD:
         res = add_list(client);
@@ -93,9 +83,13 @@ void denylist_handler(int client, const sock_cred *cred) {
         break;
     case DenyRequest::STATUS:
         if (denylist_enforced){
-        	if (hide_whitelist) res = DenyResponse::WHITELIST_ENFORCED;
-   			else res = DenyResponse::ENFORCED;
+        	res = DenyResponse::ENFORCED;
 		} else res = DenyResponse::NOT_ENFORCED;
+        break;
+    case DenyRequest::SULIST_STATUS:
+        if (sulist_enabled){
+        	res = DenyResponse::SULIST_ENFORCED;
+		} else res = DenyResponse::SULIST_NOT_ENFORCED;
         break;
     default:
         // Unknown request code
@@ -122,10 +116,8 @@ int denylist_cli(int argc, char **argv) {
         req = DenyRequest::LIST;
     else if (argv[1] == "status"sv)
         req = DenyRequest::STATUS;
-    else if (argv[1] == "blacklist"sv)
-        req = DenyRequest::BLACKLIST;
-    else if (argv[1] == "whitelist"sv)
-        req = DenyRequest::WHITELIST;
+    else if (argv[1] == "sulist"sv)
+        req = DenyRequest::SULIST_STATUS;
     else if (argv[1] == "version"sv) {
         printf("MAGISKHIDE:%d\n", hide_version);
         return 0;
@@ -180,8 +172,11 @@ int denylist_cli(int argc, char **argv) {
     case DenyResponse::ENFORCED:
     	fprintf(stderr, "MagiskHide is enabled\n");
         goto return_code;
-    case DenyResponse::WHITELIST_ENFORCED:
-    	fprintf(stderr, "MagiskHide is enabled for all apps\n");
+    case DenyResponse::SULIST_NOT_ENFORCED:
+        fprintf(stderr, "SuList is not enforced\n");
+        return 1;
+    case DenyResponse::SULIST_ENFORCED:
+    	fprintf(stderr, "SuList is enforced\n");
         return 0;
     case DenyResponse::ITEM_EXIST:
         fprintf(stderr, "Target already exists in hidelist\n");
@@ -197,6 +192,9 @@ int denylist_cli(int argc, char **argv) {
         goto return_code;
     case DenyResponse::ERROR:
         fprintf(stderr, "hide: Daemon error\n");
+        return -1;
+    case DenyResponse::SULIST_NO_DISABLE:
+        fprintf(stderr, "MagiskHide cannot be disabled because SuList is enforced\n");
         return -1;
     case DenyResponse::OK:
         break;

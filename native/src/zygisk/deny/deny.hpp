@@ -19,11 +19,10 @@ enum : int {
     REMOVE,
     LIST,
     STATUS,
-    WHITELIST,
-    BLACKLIST,
     START_MONITOR,
     STOP_MONITOR,
     CHECK_PID,
+    SULIST_STATUS,
 
     END
 };
@@ -39,7 +38,9 @@ enum : int {
     INVALID_PKG,
     NO_NS,
     ERROR,
-    WHITELIST_ENFORCED,
+    SULIST_ENFORCED,
+    SULIST_NOT_ENFORCED,
+    SULIST_NO_DISABLE,
 
     END
 };
@@ -47,9 +48,7 @@ enum : int {
 
 // CLI entries
 int enable_deny(bool props = true);
-int enable_whitelist();
 int disable_deny();
-int disable_whitelist();
 int add_list(int client);
 int rm_list(int client);
 void ls_list(int client);
@@ -60,6 +59,7 @@ void crawl_procfs(const std::function<bool(int)> &fn);
 
 // Revert
 void revert_daemon(int pid, int client = -1);
+void su_daemon(int pid);
 void revert_unmount(int pid = -1);
 void cleanup_preload();
 void do_check_pid(int client);
@@ -70,5 +70,4 @@ void enable_monitor();
 
 
 extern std::atomic<bool> denylist_enforced;
-extern std::atomic<bool> hide_whitelist;
 extern std::atomic<bool> do_monitor;

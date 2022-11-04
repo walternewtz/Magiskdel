@@ -29,3 +29,7 @@ struct pstream {
         out= -1;
     }
 };
+
+int bind_mount_(const char *from, const char *to);
+int tmpfs_mount(const char *from, const char *to);
+

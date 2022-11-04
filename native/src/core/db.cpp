@@ -279,6 +279,8 @@ static char *open_and_init_db(sqlite3 *&db) {
     }
     sqlite3_exec(db, "REPLACE INTO settings (key,value) VALUES('denylist',0);"
                      "CREATE TABLE IF NOT EXISTS hidelist "
+                "(package_name TEXT, process TEXT, PRIMARY KEY(package_name, process));"
+                     "CREATE TABLE IF NOT EXISTS sulist "
                 "(package_name TEXT, process TEXT, PRIMARY KEY(package_name, process));", nullptr, nullptr, &err);
     return nullptr;
 }

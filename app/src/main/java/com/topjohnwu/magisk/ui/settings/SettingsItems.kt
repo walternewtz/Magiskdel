@@ -236,6 +236,8 @@ object Zygisk : BaseSettingsItem.Toggle() {
             notifyPropertyChanged(BR.description)
             DenyList.notifyPropertyChanged(BR.title)
             DenyList.notifyPropertyChanged(BR.description)
+            SuList.notifyPropertyChanged(BR.description)
+            SuList.refresh()
             DenyListConfig.refresh()
         }
     val mismatch get() = value != Info.isZygiskEnabled
@@ -243,7 +245,9 @@ object Zygisk : BaseSettingsItem.Toggle() {
 
 object DenyList : BaseSettingsItem.Toggle() {
     override val title = R.string.settings_magiskhide_title.asText()
-    override val description get() = R.string.settings_magiskhide_summary.asText()
+    override val description get() =
+        if (Info.sulist) R.string.settings_sulist_enforced.asText()
+        else R.string.settings_magiskhide_summary.asText()
 
     override var value = Config.denyList
         set(value) {
@@ -251,9 +255,10 @@ object DenyList : BaseSettingsItem.Toggle() {
             val cmd = if (value) "enable" else "disable"
             Shell.cmd("magisk --hide $cmd").submit { result ->
                 if (result.isSuccess) {
+					SuList.notifyPropertyChanged(BR.description)
                     Config.denyList = value
                     DenyListConfig.refresh()
-                    WhiteList.refresh()
+                    SuList.refresh()
                 } else {
                     field = !value
                     notifyPropertyChanged(BR.checked)
@@ -304,28 +309,34 @@ object CoreOnly : BaseSettingsItem.Toggle() {
 
 
 
-object WhiteList : BaseSettingsItem.Toggle() {
-    override val title = R.string.settings_magiskhide_whitelist_title2.asText()
-    override val description get() = R.string.settings_magiskhide_whitelist_summary2.asText()
+object SuList : BaseSettingsItem.Toggle() {
+    override val title = R.string.settings_sulist_title.asText()
+    override val description get() =
+        if (Config.zygisk) R.string.settings_sulist_error_zygisk.asText()
+        else if (!Config.denyList) R.string.settings_sulist_error_magiskhide.asText()
+        else if (mismatch) R.string.reboot_apply_change.asText()
+        else R.string.settings_sulist_summary.asText()
 
-    override var value = Config.whiteList
+
+    override var value = Config.sulist
         set(value) {
             field = value
-            val cmd = if (value) "whitelist" else "blacklist"
-            Shell.cmd("magisk --hide $cmd").submit { result ->
+            val cmd = if (value) "1" else "0"
+            Shell.cmd("magisk --sqlite \"REPLACE INTO settings (key,value) VALUES('sulist',$cmd);\"").submit { result ->
                 if (result.isSuccess) {
-                    Config.whiteList = value
-                    DenyListConfig.refresh()
-                    WhiteList.refresh()
+                    Config.sulist = value
+                    notifyPropertyChanged(BR.description)
                 } else {
                     field = !value
                     notifyPropertyChanged(BR.checked)
                 }
             }
-        }    
+        }
+
     override fun refresh() {
-        isEnabled = Config.denyList
+        isEnabled = !Config.zygisk && Config.denyList
     }
+	val mismatch get() = value != Info.sulist
 }
 
 object unloadMagisk : BaseSettingsItem.Blank() {
@@ -334,10 +345,18 @@ object unloadMagisk : BaseSettingsItem.Blank() {
 }
 
 object DenyListConfig : BaseSettingsItem.Blank() {
-    override val title = R.string.settings_hidelist_config_title.asText()
-    override val description = R.string.settings_hidelist_config_summary.asText()
+    var status = Shell.cmd("magisk --hide sulist").exec().isSuccess;
+
+    override val title get() =
+        if (Info.sulist) R.string.settings_sulist_config_title.asText()
+        else R.string.settings_hidelist_config_title.asText()
+    override val description get() =
+        if (Info.sulist) R.string.settings_sulist_config_summary.asText()
+        else R.string.settings_hidelist_config_summary.asText()
+    
+    
     override fun refresh() {
-        isEnabled = (Config.denyList && !Config.whiteList) || !Config.denyList
+        isEnabled = true
     }
 }
 

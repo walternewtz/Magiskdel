@@ -260,5 +260,13 @@
     <string name="settings_clean_hidelist_title">Làm sạch danh sách ẩn</string>
     <string name="settings_clean_hidelist_summary">Loại bỏ các ứng dụng không tồn tại hoặc đã bị gỡ bỏ khỏi danh sách ẩn</string>
     <string name="settings_clean_hidelist_toast">Danh sách ẩn đã được làm sạch</string>
+    <string name="settings_sulist_title">Thực thi SuList</string>
+    <string name="settings_sulist">SuList</string>
+    <string name="settings_sulist_summary">Magisk chỉ hiển thị cho các tiến trình nằm trong SuList</string>
+    <string name="settings_sulist_config_title">Định cấu hình SuList</string>
+    <string name="settings_sulist_config_summary">Chọn các quy trình cần được đưa vào SuList</string>
+    <string name="settings_sulist_error_zygisk">Tính năng này không hỗ trợ zygisk</string>
+    <string name="settings_sulist_error_magiskhide">Tính năng này cần MagiskHide phải được bật</string>
+    <string name="settings_sulist_enforced">SuList đang thực thi</string>
 
 </resources>

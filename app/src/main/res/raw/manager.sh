@@ -320,10 +320,14 @@ check_system_magisk(){
 }
 
 clean_hidelist(){
-    local PACKAGE_NAME="$(magisk --sqlite "SELECT package_name FROM hidelist WHERE package_name NOT IN ('isolated')")"
+    local tab=hidelist
+    if [ "$SULISTMODE" == "true" ]; then
+        tab=sulist
+    fi
+    local PACKAGE_NAME="$(magisk --sqlite "SELECT package_name FROM $tab WHERE package_name NOT IN ('isolated')")"
     local PACKAGE_LIST=""
     # isolation service
-    local PACKAGE_ISOLIST="$(magisk --sqlite "SELECT process FROM hidelist WHERE package_name IN ('isolated')")"
+    local PACKAGE_ISOLIST="$(magisk --sqlite "SELECT process FROM $tab WHERE package_name IN ('isolated')")"
     local s t exist
     for s in $PACKAGE_NAME; do
         if [ "${s: 13}" == "isolated" ]; then
@@ -351,6 +355,13 @@ clean_hidelist(){
     done
 }
 
+get_sulist_status(){
+    SULISTMODE=false
+    if magisk --hide sulist; then
+        SULISTMODE=true
+    fi
+}
+
 #############
 # Initialize
 #############
@@ -364,6 +375,7 @@ app_init() {
   SHA1=$(grep_prop SHA1 $MAGISKTMP/config)
   check_encryption
   check_system_magisk
+  get_sulist_status
 }
 
 export BOOTMODE=true

@@ -50,11 +50,9 @@ static pthread_mutex_t data_lock = PTHREAD_MUTEX_INITIALIZER;
 
 atomic<bool> denylist_enforced = false;
 
-atomic<bool> hide_whitelist = false;
-
 atomic<bool> do_monitor = true;
 
-extern bool uid_granted_root(int uid);
+static const char *table_name = "hidelist";
 
 // Process monitoring
 pthread_t monitor_thread;
@@ -223,7 +221,7 @@ static bool add_hide_set(const char *pkg, const char *proc) {
     auto p = pkg_to_procs[pkg].emplace(proc);
     if (!p.second)
         return false;
-    LOGI("hidelist add: [%s/%s]\n", pkg, proc);
+    LOGI("%s add: [%s/%s]\n", table_name, pkg, proc);
     if (!do_kill)
         return true;
     if (str_eql(pkg, ISOLATED_MAGIC)) {
@@ -244,10 +242,13 @@ static bool ensure_data() {
     if (pkg_to_procs_)
         return true;
 
-    LOGI("hidelist: initializing internal data structures\n");
+    LOGI("%s: initializing internal data structures\n", table_name);
+
+    char sqlcmd[30];
+    ssprintf(sqlcmd, sizeof(sqlcmd), "SELECT * FROM %s", table_name);
 
     default_new(pkg_to_procs_);
-    char *err = db_exec("SELECT * FROM hidelist", [](db_row &row) -> bool {
+    char *err = db_exec(sqlcmd, [](db_row &row) -> bool {
         add_hide_set(row["package_name"].data(), row["process"].data());
         return true;
     });
@@ -284,9 +285,19 @@ static int add_list(const char *pkg, const char *proc) {
     // Add to database
     char sql[4096];
     ssprintf(sql, sizeof(sql),
-            "INSERT INTO hidelist (package_name, process) VALUES('%s', '%s')", pkg, proc);
+            "INSERT INTO %s (package_name, process) VALUES('%s', '%s')", table_name, pkg, proc);
     char *err = db_exec(sql);
     db_err_cmd(err, return DenyResponse::ERROR)
+    if (sulist_enabled) {
+        string pkg_data = "/data/data/"s + pkg;
+        struct stat st;
+        if (stat(pkg_data.data(), &st)==0){
+            char sql[4096];
+            ssprintf(sql, sizeof(sql),
+                "INSERT INTO policies VALUES(%d,2,0,1,1)", to_app_id(st.st_uid));
+            db_exec(sql);
+        }
+    }
     return DenyResponse::OK;
 }
 
@@ -310,10 +321,10 @@ static int rm_list(const char *pkg, const char *proc) {
                 update_pkg_uid(it->first, true);
                 pkg_to_procs.erase(it);
                 remove = true;
-                LOGI("hidelist rm: [%s]\n", pkg);
+                LOGI("%s rm: [%s]\n", table_name, pkg);
             } else if (it->second.erase(proc) != 0) {
                 remove = true;
-                LOGI("hidelist rm: [%s/%s]\n", pkg, proc);
+                LOGI("%s rm: [%s/%s]\n", table_name, pkg, proc);
                 if (it->second.empty()) {
                     update_pkg_uid(it->first, true);
                     pkg_to_procs.erase(it);
@@ -327,12 +338,22 @@ static int rm_list(const char *pkg, const char *proc) {
 
     char sql[4096];
     if (proc[0] == '\0')
-        ssprintf(sql, sizeof(sql), "DELETE FROM hidelist WHERE package_name='%s'", pkg);
+        ssprintf(sql, sizeof(sql), "DELETE FROM %s WHERE package_name='%s'", table_name, pkg);
     else
         ssprintf(sql, sizeof(sql),
-                "DELETE FROM hidelist WHERE package_name='%s' AND process='%s'", pkg, proc);
+                "DELETE FROM %s WHERE package_name='%s' AND process='%s'", table_name, pkg, proc);
     char *err = db_exec(sql);
     db_err_cmd(err, return DenyResponse::ERROR)
+    if (sulist_enabled) {
+        string pkg_data = "/data/data/"s + pkg;
+        struct stat st;
+        if (stat(pkg_data.data(), &st)==0){
+            char sql[4096];
+            ssprintf(sql, sizeof(sql),
+                "DELETE FROM policies WHERE uid%%100000 = %d", to_app_id(st.st_uid));
+            db_exec(sql);
+        }
+    }
     return DenyResponse::OK;
 }
 
@@ -373,44 +394,12 @@ static void update_deny_config() {
     db_err(err);
 }
 
-static void update_whitelist_config(){
-    char sql[64];
-    sprintf(sql, "REPLACE INTO settings (key,value) VALUES('%s',%d)",
-        DB_SETTING_KEYS[WHITELIST_CONFIG], hide_whitelist.load());
-    char *err = db_exec(sql);
-    db_err(err);
-}
-
 static int new_daemon_thread(void(*entry)()) {
     thread_entry proxy = [](void *entry) -> void * {
         reinterpret_cast<void(*)()>(entry)();
         return nullptr;
     };
     return new_daemon_thread(proxy, (void *) entry);
-}
-
-int enable_whitelist(){
-    if (hide_whitelist)
-        return DenyResponse::OK;
-    else if (!denylist_enforced)
-         return DenyResponse:: NOT_ENFORCED;
-         
-    LOGI("* Enable MagiskHideAll\n");
-
-    hide_whitelist = true;
-    update_whitelist_config();
-    return DenyResponse::OK;
-}
-
-int disable_whitelist(){
-    if (!hide_whitelist)
-        return DenyResponse::OK;
-
-    LOGI("* Disable MagiskHideAll\n");
-
-    hide_whitelist = false;
-    update_whitelist_config();
-    return DenyResponse::OK;
 }
 
 
@@ -428,8 +417,12 @@ int enable_deny(bool props) {
         if (procfp == nullptr && (procfp = opendir("/proc")) == nullptr)
             return DenyResponse::ERROR;
 
-        LOGI("* Enable MagiskHide\n");
-        
+        if (sulist_enabled) {
+            LOGI("* Enable SuList\n");
+        } else {
+            LOGI("* Enable MagiskHide\n");
+        }
+
         if (props) hide_sensitive_props();
         denylist_enforced = true;
 
@@ -450,7 +443,8 @@ int enable_deny(bool props) {
         if (SDK_INT >= 29) {
             kill_process("usap32", true);
             kill_process("usap64", true);
-            kill_process<&proc_context_match>("u:r:app_zygote:s0", true);
+            if (!sulist_enabled)
+                kill_process<&proc_context_match>("u:r:app_zygote:s0", true);
         }
     }
 
@@ -476,6 +470,10 @@ void disable_monitor(){
 }
 
 int disable_deny() {
+    // sulist mode cannot be turn off without reboot
+    if (sulist_enabled)
+        return DenyResponse::SULIST_NO_DISABLE;
+
     if (denylist_enforced) {
         denylist_enforced = false;
         LOGI("* Disable MagiskHide\n");
@@ -490,6 +488,7 @@ int disable_deny() {
 }
 
 void initialize_denylist() {
+    if (sulist_enabled) table_name = "sulist";
     if (!denylist_enforced) {
         db_settings dbs;
         get_db_settings(dbs, DENYLIST_CONFIG);
@@ -501,10 +500,6 @@ void initialize_denylist() {
 void reset_sensitive_props() {
     if (denylist_enforced) {
         hide_sensitive_props();
-        db_settings dbs;
-        get_db_settings(dbs, WHITELIST_CONFIG);
-        if (dbs[WHITELIST_CONFIG])
-            enable_whitelist();
     }
 }
 
@@ -518,13 +513,14 @@ bool is_deny_target(int uid, string_view process, int max_len) {
 
     int app_id = to_app_id(uid);
     int manager_app_id = get_manager();
-    
-    if (denylist_enforced && hide_whitelist){
-        if (uid_granted_root(uid) || (to_app_id(uid) == manager_app_id) || (app_id == 0))
-            return false;
-        return true;
+    string process_name = {process.begin(), process.end()};
+
+    if (app_id == manager_app_id) {
+        // allow manager to access Magisk
+        if (sulist_enabled) return true;
+        else return false;
     }
-    
+
     if (app_id >= 90000) {
         if (auto it = pkg_to_procs.find(ISOLATED_MAGIC); it != pkg_to_procs.end()) {
             for (const auto &s : it->second) {
@@ -727,7 +723,7 @@ static bool check_process(int pid, const char *process = 0, const char *context 
     if (!fprocess) return false;
     fscanf(fprocess, "%s", buf);
     fclose(fprocess);
-    if (strcmp(buf, context) != 0) return false;
+    if (!str_contains(buf, context)) return false;
     
     check_exe:
     if (!exe) goto final;
@@ -762,9 +758,20 @@ static bool is_zygote_process(int pid_){
 }
 
 static void check_zygote() {
+    char vx[200];
+    if (sulist_enabled) {
+        __system_property_get("sys.boot_completed", vx);
+        while(vx != "1"sv) {
+            // wait system to complete boot
+            sleep(1);
+            __system_property_get("sys.boot_completed", vx);
+        }
+    }
     crawl_procfs([](int pid) -> bool {
-        if (is_zygote_process(pid) && parse_ppid(pid) == 1)
-            new_zygote(pid);
+        if (is_zygote_process(pid) && parse_ppid(pid) == 1) {
+            LOGI("proc_monitor: zygote PID=[%d]\n", pid);
+            new_zygote(pid);;
+        }
         return true;
     });
     if (is_zygote_done()) {
@@ -941,8 +948,12 @@ check_and_hide:
     // The hide daemon will resume the process after hiding it
     LOGI("proc_monitor: [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
 
-    // hide magisk
-    revert_daemon(pid);
+    if (sulist_enabled) {
+        su_daemon(pid);
+	} else {
+        // hide magisk
+        revert_daemon(pid);
+	}
     return true;
 
 not_target:
@@ -973,9 +984,9 @@ static void new_zygote(int pid) {
         it->second = st;
         return;
     }
-
-    LOGI("proc_monitor: ptrace zygote PID=[%d]\n", pid);
+    LOGI("proc_monitor: update zygote PID=[%d]\n", pid);
     zygote_map[pid] = st;
+    if (sulist_enabled) revert_daemon(pid,-2);
 }
 
 #define DETACH_AND_CONT { detach_pid(pid); continue; }
@@ -996,6 +1007,12 @@ void do_check_fork() {
 
 void do_check_pid(int client){
     int pid = read_int(client);
+    char vx[100];
+    if (sulist_enabled) {
+        __system_property_get("sys.boot_completed", vx);
+        if (vx != "1"sv) return;
+    }
+
     fork_pid = pid;
     new_daemon_thread(&do_check_fork);
 }
@@ -1059,7 +1076,7 @@ void proc_monitor() {
     int ret;
     struct pollfd pfd[1];
 
-    if (SDK_INT < 29) goto am_proc_start; // Android 9 and below
+    if (SDK_INT < 29 || sulist_enabled) goto am_proc_start; // Android 9 and below
 
     while(1){
         pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);

@@ -206,7 +206,7 @@ static bool is_client(pid_t pid) {
     char path[32];
     sprintf(path, "/proc/%d/exe", pid);
     struct stat st{};
-    return !(stat(path, &st) || st.st_dev != self_st.st_dev || st.st_ino != self_st.st_ino);
+    return !(stat(path, &st) || st.st_size != self_st.st_size);
 }
 
 static void handle_request(pollfd *pfd) {
