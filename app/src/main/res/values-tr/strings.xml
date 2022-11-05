@@ -239,7 +239,14 @@
     <string name="settings_anti_bootloop_summary">Uyumsuz modüllerin cihazınızı yeniden başlatma döngüsünden kurtarın</string>
     <string name="settings_coreonly_title">Core-only mode</string>
     <string name="settings_coreonly_summary">Yalnızca MagiskSU (Kök erişimi) ve MagiskHide gibi temel özellikler kullanılabilir ve yalnızca Çekirdek modunda hiçbir modül yüklenmez. Etkili olması için yeniden başlatma gereklidir.</string>
-   
-   
+    <string name="settings_sulist_title">SuList\'e Zorla</string>
+    <string name="settings_sulist">SuList</string>
+    <string name="settings_sulist_summary">Magisk yalnızca sulist içindeki işlemler için görünür</string>
+    <string name="settings_sulist_config_title">SuList\'i yapılandır</string>
+    <string name="settings_sulist_config_summary">Sulist\'e dahil edilecek işlemleri seçin</string>
+    <string name="settings_sulist_error_zygisk">Bu özellik Zygisk ile bir arada kullanılamaz</string>
+    <string name="settings_sulist_error_magiskhide">Bu özellik MagiskHide gerektirir</string>
+    <string name="settings_sulist_enforced">SuList zorunlu yapıldı</string>
+
 
 </resources>

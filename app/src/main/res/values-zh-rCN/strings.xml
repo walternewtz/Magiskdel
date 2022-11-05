@@ -264,6 +264,15 @@
     <string name="settings_clean_hidelist_summary">删除隐藏列表中所有不存在和未安装的应用</string>
     <string name="settings_clean_hidelist_title">清理隐藏列表</string>
     <string name="settings_clean_hidelist_toast">隐藏列表已清理</string>
+    <string name="settings_sulist">超级用户列表</string>
+    <string name="settings_sulist_config_summary">选择需要访问超级用户的进程</string>
+    <string name="settings_sulist_config_title">配置超级用户列表</string>
+    <string name="settings_sulist_enforced">超级用户列表已强制开启</string>
+    <string name="settings_sulist_error_magiskhide">此功能需要开启 Magisk Hide</string>
+    <string name="settings_sulist_error_zygisk">此功能与 Zygisk 不共存</string>
+    <string name="settings_sulist_summary">仅超级用户列表内的进程可以访问 Magisk</string>
+    <string name="settings_sulist_title">强制使用超级用户列表</string>
+
 
 
 

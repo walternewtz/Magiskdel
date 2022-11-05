@@ -258,5 +258,16 @@
     <string name="settings_anti_bootloop_title">引導循環保護</string>
     <string name="settings_coreonly_title">僅核心模式</string>
     <string name="settings_coreonly_summary">只有 MagiskSU（根訪問）和 MagiskHide 等核心功能可用，並且在純核心模式下不會加載任何模組。需要重啟才能生效。 </string>
+    <string name="settings_clean_hidelist_summary">刪除隱藏列表中所有不存在和未安裝的應用</string>
+    <string name="settings_clean_hidelist_title">清理隱藏列表</string>
+    <string name="settings_clean_hidelist_toast">隱藏列表已清理</string>
+    <string name="settings_sulist">超級用戶列表</string>
+    <string name="settings_sulist_config_summary">選擇需要訪問超級用戶的進程</string>
+    <string name="settings_sulist_config_title">配置超級用戶列表</string>
+    <string name="settings_sulist_enforced">超級用戶列表已強制開啟</string>
+    <string name="settings_sulist_error_magiskhide">此功能需要開啟 Magisk Hide</string>
+    <string name="settings_sulist_error_zygisk">此功能與 Zygisk 不共存</string>
+    <string name="settings_sulist_summary">僅超級用戶列表內的進程可以訪問 Magisk</string>
+    <string name="settings_sulist_title">強制使用超級用戶列表</string>
 
 </resources>

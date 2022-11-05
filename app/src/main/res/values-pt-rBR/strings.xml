@@ -249,6 +249,13 @@
     <string name="settings_magiskhide_whitelist_summary">Esconde o Magisk de todas as aplicações exceto as que adquiriram privilégios root previamente</string>
     <string name="settings_magiskhide_dualspace_title">MagiskHide Dualspace</string>
     <string name="settings_magiskhide_dualspace_summary">Esconde o Magisk de todas as aplicações no perfil de trabalho</string>
-
+    <string name="settings_sulist_title">Habilitar a SuList</string>
+    <string name="settings_sulist">SuList</string>
+    <string name="settings_sulist_summary">Magisk será visível somente para processos listados na SuList</string>
+    <string name="settings_sulist_config_title">Configurar a SuList</string>
+    <string name="settings_sulist_config_summary">Selecione os processos a serem inclusos na SuList</string>
+    <string name="settings_sulist_error_zygisk">Esta ferramenta não pode coexistir com o Zygisk</string>
+    <string name="settings_sulist_error_magiskhide">Esta ferramenta necessita que o MagiskHide esteja habilitado</string>
+    <string name="settings_sulist_enforced">A SuList está habilitada</string>
 
 </resources>

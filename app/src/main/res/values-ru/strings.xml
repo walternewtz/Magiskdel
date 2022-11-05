@@ -259,5 +259,13 @@
     <string name="settings_anti_bootloop_summary">Перезагрузитесь в режим только ядра, если процесс зиготы не запускался много раз.</string>
     <string name="settings_coreonly_title">Основной режим</string>
     <string name="settings_coreonly_summary">Доступны только основные функции, такие как MagiskSU (Root-доступ) и MagiskHide, и никакие модули не будут загружаться в режиме «Только ядро». Для вступления в силу требуется перезагрузка.</string>
+    <string name="settings_sulist_title">Активировать SuList</string>
+    <string name="settings_sulist">SuList</string>
+    <string name="settings_sulist_summary">Magisk будет доступен только процессам в SuList</string>
+    <string name="settings_sulist_config_title">Настройка SuList</string>
+    <string name="settings_sulist_config_summary">Отметьте процессы для включения в SuList</string>
+    <string name="settings_sulist_error_zygisk">Функция не работает вместе с Zygisk</string>
+    <string name="settings_sulist_error_magiskhide">Для этой фунцкии необходимо включить MagiskHide</string>
+    <string name="settings_sulist_enforced">SuList активирован</string>
 
 </resources>

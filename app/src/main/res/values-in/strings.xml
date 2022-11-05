@@ -247,8 +247,6 @@
     <string name="settings_unload_magisk_toast">Magisk telah dinonaktifkan secara sementara. Mulai ulang untuk mengembalikan Magisk</string>
     <string name="settings_hidelist_config_title">Konfigurasi MagiskHide</string>
     <string name="settings_hidelist_config_summary">Pilih proses yang akan disertakan pada MagiskHide</string>
-    <string name="settings_magiskhide_whitelist_title2">MagiskHide di Semua Proses</string>
-    <string name="settings_magiskhide_whitelist_summary2">Menerapkan MagiskHide pada semua aplikasi kecuali aplikasi yang berada dalam daftar Superuser. Menyalakan fitur ini dapat menyebabkan beberapa modul dan sistem bermasalah, jangan gunakan apabila tidak perlu</string>
     <string name="settings_anti_bootloop_title">Proteksi dari Bootloop</string>
     <string name="settings_anti_bootloop_summary">Otomatis mulai ulang ke mode hanya Inti jika proses zygote gagal memulai dalam beberapa kali</string>
     <string name="settings_coreonly_title">Mode hanya Inti</string>
@@ -256,6 +254,13 @@
     <string name="settings_clean_hidelist_title">Bersihkan daftar Konfigurasi MagiskHide</string>
     <string name="settings_clean_hidelist_summary">Menghapus daftar Konfigurasi MagiskHide untuk aplikasi yang telah dicopot atau tidak terpasang pada perangkat</string>
     <string name="settings_clean_hidelist_toast">Konfigurasi MagiskHide telah dibersihkan</string>
-
+    <string name="settings_sulist_title">Paksa mode Daftar Su</string>
+    <string name="settings_sulist">Daftar Su</string>
+    <string name="settings_sulist_summary">Mengaktifkan mode yang dimana Magisk hanya akan dimuat pada aplikasi yang telah terpilih di Konfigurasi Daftar Su dan yang telah diberikan izin Superuser</string>
+    <string name="settings_sulist_config_title">Konfigurasi Daftar Su</string>
+    <string name="settings_sulist_config_summary">Pilih proses yang akan disertakan pada Daftar Su</string>
+    <string name="settings_sulist_error_zygisk">Fitur ini tidak dapat dinyalakan bersamaan dengan Zygisk</string>
+    <string name="settings_sulist_error_magiskhide">Fitur ini memerlukan MagiskHide dalam keadaan aktif</string>
+    <string name="settings_sulist_enforced">Mode Daftar Su aktif</string>
 
 </resources>
