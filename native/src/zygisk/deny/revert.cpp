@@ -35,6 +35,9 @@ void root_mount(int pid) {
         tmpfs_mount("tmpfs", MAGISKTMP.data());
     }
 
+    if (MAGISKTMP == "/sbin" && check_envpath("/sbin"))
+        return;
+
     chdir(MAGISKTMP.data());
 
     xmkdir(INTLROOT, 0755);
@@ -64,15 +67,14 @@ void root_mount(int pid) {
             stat("/", &st) == 0) {
             mknod(BLOCKDIR "/system", S_IFBLK | 0600, st.st_dev);
             xmkdir(MIRRDIR "/system", 0755);
-            int flags = 0;                  
-            auto opts = split_ro(me->mnt_opts, ",");
-            for (string_view s : opts) {    
-                if (s == "ro") {            
-                    flags |= MS_RDONLY;     
-                    break;                  
-                }                           
-            } 
-            xmount(BLOCKDIR "/system", MIRRDIR "/system", me->mnt_type, flags, nullptr);
+            int ret = xmount(BLOCKDIR "/system", MIRRDIR "/system", me->mnt_type, MS_RDONLY, nullptr);
+            if (ret != 0) {
+                LOGD("su_policy: try mount system with read-write mode\n");
+                ret = xmount(BLOCKDIR "/system", MIRRDIR "/system", me->mnt_type, 0, nullptr);
+                if (ret != 0) {
+                    LOGW("su_policy: unable to mount system, root access was lost!\n");
+                }
+            }
             return false;
         }
         return true;
@@ -86,15 +88,14 @@ void root_mount(int pid) {
                 stat("/", &st) == 0) {
                 mknod(BLOCKDIR "/system_root", S_IFBLK | 0600, st.st_dev);
                 xmkdir(MIRRDIR "/system_root", 0755);
-                int flags = 0;                  
-                auto opts = split_ro(me->mnt_opts, ",");
-                for (string_view s : opts) {    
-                    if (s == "ro") {            
-                        flags |= MS_RDONLY;     
-                        break;                  
-                    }                           
-                } 
-                xmount(BLOCKDIR "/system_root", MIRRDIR "/system_root", me->mnt_type, flags, nullptr);
+                int ret = xmount(BLOCKDIR "/system_root", MIRRDIR "/system_root", me->mnt_type, MS_RDONLY, nullptr);
+                if (ret != 0) {
+                    LOGD("su_policy: try mount system with read-write mode\n");
+                    ret = xmount(BLOCKDIR "/system_root", MIRRDIR "/system_root", me->mnt_type, 0, nullptr);
+                    if (ret != 0) {
+                        LOGE("su_policy: unable to mount system, root access was lost!\n");
+                    }
+                }
                 return false;
             }
             return true;
