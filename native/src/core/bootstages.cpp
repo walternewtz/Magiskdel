@@ -28,7 +28,7 @@
 #define TST_TMPFS_MAGIC    0x01021994
 #define TST_OVERLAYFS_MAGIC 0x794c7630
 
-static bool is_rootfs()
+bool is_rootfs()
 {
     const char *path="/";
     struct statfs s;
@@ -110,7 +110,7 @@ if (MNT_DIR_IS(dir) && !MNT_TYPE_IS("tmpfs") && !MNT_TYPE_IS("overlay")) { \
 
 #define link_orig(part) link_orig_dir("/" #part, part)
 
-static void recreate_sbin(const char *mirror, bool use_bind_mount) {
+void recreate_sbin_v2(const char *mirror, bool use_bind_mount) {
     auto dp = xopen_dir(mirror);
     int src = dirfd(dp.get());
     char buf[4096];
@@ -376,14 +376,16 @@ void unlock_blocks() {
 
 int mount_sbin(){
     if (is_rootfs()){
+        if (xmount(nullptr, "/", nullptr, MS_REMOUNT, nullptr) != 0) return -1;
+        mkdir("/sbin", 0750);
+        rm_rf("/root");
+        mkdir("/root", 0750);
+        clone_attr("/sbin", "/root");
+        link_path("/sbin", "/root");
         if (tmpfs_mount("tmpfs", "/sbin") != 0) return -1;
         setfilecon("/sbin", "u:object_r:rootfs:s0");
-        xmkdir("/sbin/" INTLROOT, 0755);
-        xmkdir("/sbin/" MIRRDIR, 0755);
-        xmkdir("/sbin/" MIRRDIR "/rootfs", 0755);
-        xmount("/", "/sbin/" MIRRDIR "/rootfs", nullptr, MS_BIND, nullptr);
-        recreate_sbin("/sbin/" MIRRDIR "/rootfs/sbin", true);
-        umount2("/sbin/" MIRRDIR "/rootfs", MNT_DETACH);
+        recreate_sbin_v2("/root", false);
+        xmount(nullptr, "/", nullptr, MS_REMOUNT | MS_RDONLY, nullptr);
     } else {
         if (tmpfs_mount("tmpfs", "/sbin") != 0) return -1;
         setfilecon("/sbin", "u:object_r:rootfs:s0");
@@ -391,7 +393,7 @@ int mount_sbin(){
         xmkdir("/sbin/" MIRRDIR, 0755);
         xmkdir("/sbin/" MIRRDIR "/system_root", 0755);
         xmount("/", "/sbin/" MIRRDIR "/system_root", nullptr, MS_BIND, nullptr);
-        recreate_sbin("/sbin/" MIRRDIR "/system_root/sbin", true);
+        recreate_sbin_v2("/sbin/" MIRRDIR "/system_root/sbin", true);
         umount2("/sbin/" MIRRDIR "/system_root", MNT_DETACH);
     }
     return 0;

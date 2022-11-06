@@ -29,20 +29,17 @@ void root_mount(int pid) {
     xmount(nullptr, "/", nullptr, MS_PRIVATE | MS_REC, nullptr);
 
     if (MAGISKTMP == "/sbin") {
-        mount_sbin();
+        if (is_rootfs()) {
+            tmpfs_mount("tmpfs", "/sbin");
+            setfilecon("/sbin", "u:object_r:rootfs:s0");
+            recreate_sbin_v2("/root", false);
+        } else {
+            mount_sbin();
+        }
     } else {
         mkdir(MAGISKTMP.data(),0755);
         tmpfs_mount("tmpfs", MAGISKTMP.data());
     }
-
-    if (MAGISKTMP == "/sbin" && check_envpath("/sbin"))
-        return;
-
-    chdir(MAGISKTMP.data());
-
-    xmkdir(INTLROOT, 0755);
-    xmkdir(MIRRDIR, 0);
-    xmkdir(BLOCKDIR, 0);
 
     for (auto file : {"magisk32", "magisk64", "magisk", "magiskpolicy"}) {
         auto src = "/proc/1/root"s + MAGISKTMP + "/"s + file;
@@ -59,6 +56,15 @@ void root_mount(int pid) {
     }
     string dest = MAGISKTMP + "/supolicy";
     xsymlink("./magiskpolicy", dest.data());
+
+    if (MAGISKTMP == "/sbin" && check_envpath("/sbin"))
+        return;
+
+    chdir(MAGISKTMP.data());
+
+    xmkdir(INTLROOT, 0755);
+    xmkdir(MIRRDIR, 0);
+    xmkdir(BLOCKDIR, 0);
 
     parse_mnt("/proc/mounts", [&](mntent *me) {
         struct stat st{};
