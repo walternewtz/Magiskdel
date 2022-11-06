@@ -925,7 +925,7 @@ check_and_hide:
     }
 
     // stop app process as soon as possible and do check if this process is target or not
-    kill(pid, SIGSTOP);
+    if (!sulist_enabled) kill(pid, SIGSTOP);
 
     if (!is_deny_target(uid, cmdline, 95)) {
         goto not_target;
@@ -949,15 +949,17 @@ check_and_hide:
     LOGI("proc_monitor: [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
 
     if (sulist_enabled) {
+        // mount magisk in sulist mode
+        kill(pid, SIGSTOP);
         su_daemon(pid);
 	} else {
-        // hide magisk
+        // hide magisk in normal mode
         revert_daemon(pid);
 	}
     return true;
 
 not_target:
-    kill(pid, SIGCONT);
+    if (!sulist_enabled) kill(pid, SIGCONT);
     return true;
 }
 
