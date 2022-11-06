@@ -261,7 +261,7 @@ void reboot() {
         exec_command_sync("/system/bin/reboot");
 }
 
-static bool core_only(bool rm_trigger){
+static bool core_only(bool rm_trigger = false){
     if (access("/data/adb/.disable_magisk", F_OK) == 0 \
 		|| access("/cache/.disable_magisk", F_OK) == 0 \
 		|| access("/persist/.disable_magisk", F_OK) == 0 \
@@ -276,6 +276,25 @@ static bool core_only(bool rm_trigger){
             rm_rf("/mnt/vendor/persist/.disable_magisk");
             rm_rf("/data/adb/.disable_magisk");
         }
+        return true;
+    }
+    return false;
+}
+
+
+static bool should_skip_all(){
+    if (access("/data/adb/.disable_all", F_OK) == 0 \
+		|| access("/cache/.disable_all", F_OK) == 0 \
+		|| access("/persist/.disable_all", F_OK) == 0 \
+		|| access("/data/unencrypted/.disable_all", F_OK) == 0 \
+		|| access("/metadata/.disable_all", F_OK) == 0 \
+		|| access("/mnt/vendor/persist/.disable_all", F_OK) == 0){
+        rm_rf("/cache/.disable_all");
+        rm_rf("/metadata/.disable_all");
+        rm_rf("/persist/.disable_all");
+        rm_rf("/data/unencrypted/.disable_all");
+        rm_rf("/mnt/vendor/persist/.disable_all");
+        rm_rf("/data/adb/.disable_all");
         return true;
     }
     return false;
@@ -583,7 +602,6 @@ void post_fs_data(int client) {
     else
         rm_rf(COUNT_FAILBOOT);
 
-    unlock_blocks();
     mount_mirrors();
     rebind_early_to_mirr();
     prune_su_access();
@@ -619,6 +637,11 @@ void post_fs_data(int client) {
         } else {
             exec_common_scripts("post-fs-data");
         }
+        if (should_skip_all()) {
+            disable_modules();
+            disable_deny();
+            goto handle_modules;
+        }
         get_db_settings(dbs, ZYGISK_CONFIG);
         get_db_settings(dbs, WHITELIST_CONFIG);
         get_db_settings(dbs, DENYLIST_CONFIG);
@@ -627,8 +650,10 @@ void post_fs_data(int client) {
         // sulist mode does not support zygisk
         sulist_enabled = dbs[DENYLIST_CONFIG] && dbs[WHITELIST_CONFIG] && !zygisk_enabled;
         initialize_denylist();
+
+    handle_modules:
         if (core_only(false)) prepare_modules();
-		else handle_modules();
+        else handle_modules();
     }
 
 early_abort:
