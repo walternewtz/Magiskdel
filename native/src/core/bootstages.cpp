@@ -24,6 +24,8 @@
 
 #define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
 
+static bool log_enabled = true;
+
 #define TST_RAMFS_MAGIC    0x858458f6
 #define TST_TMPFS_MAGIC    0x01021994
 #define TST_OVERLAYFS_MAGIC 0x794c7630
@@ -77,8 +79,9 @@ bool sulist_enabled = false;
             break;                  \
         }                           \
     }                               \
-    xmount(buf2, buf1, me->mnt_type, flags, nullptr); \
-    LOGI("mount: %s\n", buf1);      \
+    int ret = xmount(buf2, buf1, me->mnt_type, flags, nullptr); \
+    if (ret != 0) xmount(buf2, buf1, me->mnt_type, 0, nullptr); \
+    if (log_enabled) LOGI("mount: %s\n", buf1);      \
 }
 
 #define mount_orig_mirror(dir, part) \
@@ -96,7 +99,7 @@ if (MNT_DIR_IS("/" #dir)  \
 SETMIR(buf1, part); \
 if (access("/system/" #part, F_OK) == 0 && access(buf1, F_OK) != 0) { \
     xsymlink("./system/" #part, buf1); \
-    LOGI("link: %s\n", buf1); \
+    if (log_enabled) LOGI("link: %s\n", buf1); \
 }
 
 #define link_orig_dir(dir, part) \
@@ -104,7 +107,7 @@ if (MNT_DIR_IS(dir) && !MNT_TYPE_IS("tmpfs") && !MNT_TYPE_IS("overlay")) { \
     SETMIR(buf1, part);          \
     rmdir(buf1);                 \
     xsymlink(dir, buf1);         \
-    LOGI("link: %s\n", buf1);    \
+    if (log_enabled) LOGI("link: %s\n", buf1);    \
     break;                       \
 }
 
@@ -144,11 +147,11 @@ void recreate_sbin_v2(const char *mirror, bool use_bind_mount) {
     }
 }
 
-static void mount_mirrors() {
+void mount_mirrors() {
     char buf1[4096];
     char buf2[4096];
 
-    LOGI("* Mounting mirrors\n");
+    if (log_enabled) LOGI("* Mounting mirrors\n");
 
     parse_mnt("/proc/mounts", [&](mntent *me) {
         struct stat st{};
@@ -184,7 +187,7 @@ static void mount_mirrors() {
     SETMIR(buf1, system);
     if (access(buf1, F_OK) != 0) {
         xsymlink("./system_root/system", buf1);
-        LOGI("link: %s\n", buf1);
+        if (log_enabled) LOGI("link: %s\n", buf1);
         parse_mnt("/proc/mounts", [&](mntent *me) {
             struct stat st;
             if (MNT_DIR_IS("/") && me->mnt_type != "rootfs"sv && stat("/", &st) == 0) {
@@ -197,6 +200,7 @@ static void mount_mirrors() {
     link_mirror(vendor)
     link_mirror(product)
     link_mirror(system_ext)
+    log_enabled = false;
 }
 
 static bool magisk_env() {

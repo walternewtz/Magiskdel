@@ -688,11 +688,9 @@ void su_mount() {
     auto system = new root_node("system");
     root->insert(system);
     
-    if (MAGISKTMP != "/sbin" || !check_envpath("/sbin")) {
-        // Need to inject our binaries into /system/bin
-        LOGD("su_mount: /system/bin <- magisk\n");
-        inject_magisk_bins(system);
-    }
+    // Need to inject our binaries into /system/bin
+    LOGD("su_mount: /system/bin <- magisk\n");
+    inject_magisk_bins(system);
 
     root->prepare();
     root->mount();

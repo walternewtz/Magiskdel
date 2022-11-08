@@ -13,6 +13,8 @@
 
 using namespace std;
 
+void mount_mirrors();
+
 static void lazy_unmount(const char* mountpoint) {
     if (umount2(mountpoint, MNT_DETACH) != -1)
         LOGD("hide_daemon: Unmounted (%s)\n", mountpoint);
@@ -57,58 +59,24 @@ void root_mount(int pid) {
     string dest = MAGISKTMP + "/supolicy";
     xsymlink("./magiskpolicy", dest.data());
 
-    if (MAGISKTMP == "/sbin" && check_envpath("/sbin"))
-        return;
-
     chdir(MAGISKTMP.data());
 
     xmkdir(INTLROOT, 0755);
     xmkdir(MIRRDIR, 0);
     xmkdir(BLOCKDIR, 0);
+    xmkdir(MODULEMNT, 0);
 
-    parse_mnt("/proc/mounts", [&](mntent *me) {
-        struct stat st{};
-        if ((me->mnt_dir == string_view("/system")) && me->mnt_type != "tmpfs"sv && 
-            me->mnt_type != "rootfs"sv && me->mnt_type != "overlay"sv &&
-            stat("/", &st) == 0) {
-            mknod(BLOCKDIR "/system", S_IFBLK | 0600, st.st_dev);
-            xmkdir(MIRRDIR "/system", 0755);
-            int ret = xmount(BLOCKDIR "/system", MIRRDIR "/system", me->mnt_type, MS_RDONLY, nullptr);
-            if (ret != 0) {
-                LOGD("su_policy: try mount system with read-write mode\n");
-                ret = xmount(BLOCKDIR "/system", MIRRDIR "/system", me->mnt_type, 0, nullptr);
-                if (ret != 0) {
-                    LOGW("su_policy: unable to mount system, root access was lost!\n");
-                }
-            }
-            return false;
-        }
-        return true;
-    });
-    if (access(MIRRDIR "/system", F_OK) != 0) {
-        xsymlink("./system_root/system", MIRRDIR "/system");
-        parse_mnt("/proc/mounts", [&](mntent *me) {
-            struct stat st{};
-            if ((me->mnt_dir == string_view("/")) && me->mnt_type != "tmpfs"sv && 
-                me->mnt_type != "rootfs"sv && me->mnt_type != "overlay"sv &&
-                stat("/", &st) == 0) {
-                mknod(BLOCKDIR "/system_root", S_IFBLK | 0600, st.st_dev);
-                xmkdir(MIRRDIR "/system_root", 0755);
-                int ret = xmount(BLOCKDIR "/system_root", MIRRDIR "/system_root", me->mnt_type, MS_RDONLY, nullptr);
-                if (ret != 0) {
-                    LOGD("su_policy: try mount system with read-write mode\n");
-                    ret = xmount(BLOCKDIR "/system_root", MIRRDIR "/system_root", me->mnt_type, 0, nullptr);
-                    if (ret != 0) {
-                        LOGE("su_policy: unable to mount system, root access was lost!\n");
-                    }
-                }
-                return false;
-            }
-            return true;
-        });
-    }
+    mount_mirrors();
+
+    xmount(MIRRDIR "/" MODULEROOT, MODULEMNT, nullptr, MS_BIND, nullptr);
 
     chdir("/");
+
+    // no need to inject magisk into "/system/bin"
+    // when "/sbin" is in PATH 
+    if (MAGISKTMP == "/sbin" && check_envpath("/sbin"))
+        return;
+
     su_mount();
 }
 
