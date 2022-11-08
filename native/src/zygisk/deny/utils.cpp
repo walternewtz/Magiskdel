@@ -757,6 +757,16 @@ static bool is_zygote_process(int pid_){
     return !not_zygote_process(pid_);
 }
 
+static void do_scan_zygote(){
+    crawl_procfs([](int pid) -> bool {
+        if (is_zygote_process(pid) && parse_ppid(pid) == 1) {
+            LOGI("proc_monitor: zygote PID=[%d]\n", pid);
+            new_zygote(pid);;
+        }
+        return true;
+    });
+}
+
 static void check_zygote() {
     char vx[200];
     if (sulist_enabled) {
@@ -767,13 +777,7 @@ static void check_zygote() {
             __system_property_get("sys.boot_completed", vx);
         }
     }
-    crawl_procfs([](int pid) -> bool {
-        if (is_zygote_process(pid) && parse_ppid(pid) == 1) {
-            LOGI("proc_monitor: zygote PID=[%d]\n", pid);
-            new_zygote(pid);;
-        }
-        return true;
-    });
+    do_scan_zygote();
     if (is_zygote_done()) {
         // Stop periodic scanning
         timeval val { .tv_sec = 0, .tv_usec = 0 };
@@ -782,7 +786,22 @@ static void check_zygote() {
     }
 }
 
+static void sulist_init_zygote() {
+    char vx[200];
+    if (sulist_enabled) {
+        __system_property_get("sys.boot_completed", vx);
+        if (vx == "1"sv) return;
+        // block until boot complete
+        while(vx != "1"sv) {
+            sleep(1);
+            __system_property_get("sys.boot_completed", vx);
+        }
+    }
+    do_scan_zygote();
+}
+
 #define APP_PROC "/system/bin/app_process"
+#if 0
 
 static void setup_inotify() {
     inotify_fd = inotify_init1(IN_CLOEXEC);
@@ -823,6 +842,7 @@ static void inotify_event(int) {
         return;  // Nothing to read
     check_zygote();
 }
+#endif
 
 static void term_thread(int) {
     LOGD("proc_monitor: cleaning up\n");
@@ -839,8 +859,10 @@ static void term_thread(int) {
     struct sigaction act{};
     act.sa_handler = SIG_DFL;
     sigaction(SIGTERMTHRD, &act, nullptr);
+#if 0
     sigaction(SIGIO, &act, nullptr);
     sigaction(SIGALRM, &act, nullptr);
+#endif
     LOGD("proc_monitor: terminate\n");
     pthread_exit(nullptr);
 }
@@ -849,6 +871,7 @@ static bool check_pid(int pid) {
     char path[128];
     char cmdline[1024];
     char context[1024];
+    int ppid = 0;
     struct stat st;
     sprintf(path, "/proc/%d", pid);
     if (stat(path, &st)) {
@@ -931,6 +954,12 @@ check_and_hide:
         goto not_target;
     }
 
+    ppid = parse_ppid(pid);
+    // in case this zygote is not update
+    if (is_zygote_process(ppid) && parse_ppid(ppid) == 1) {
+        new_zygote(ppid);
+    }
+
     // Ensure ns is separated
     read_ns(pid, &st);
     for (auto &zit : zygote_map) {
@@ -986,8 +1015,10 @@ static void new_zygote(int pid) {
         it->second = st;
         return;
     }
+
     LOGI("proc_monitor: update zygote PID=[%d]\n", pid);
     zygote_map[pid] = st;
+
     if (sulist_enabled) revert_daemon(pid,-2);
 }
 
@@ -1044,12 +1075,14 @@ void proc_monitor() {
     act.sa_handler = term_thread;
     sigaction(SIGTERMTHRD, &act, nullptr);
 
+#if 0
     act.sa_handler = inotify_event;
     sigaction(SIGIO, &act, nullptr);
     act.sa_handler = [](int){ check_zygote(); };
     sigaction(SIGALRM, &act, nullptr);
 
     setup_inotify();
+#endif
 
     check_zygote();
     if (!is_zygote_done()) {
@@ -1068,8 +1101,12 @@ void proc_monitor() {
     char *command_[] = {"/system/bin/logcat",
 	    "Zygote:*", "*:S", 0};
     char *command2[] = {"/system/bin/logcat", 
-        "-b", "events", "-s", 
-		"boot_progress_pms_ready",
+        "-b", "events", 
+        "-s", "boot_progress_start",
+        "-s", "boot_progress_preload_start",
+        "-s", "boot_progress_preload_end",
+        "-s", "boot_progress_pms_ready",
+        "-s", "boot_progress_ams_ready",
         "-s", "am_proc_start", 0};
     char buf[4098];
     char log_pid[10];
@@ -1090,7 +1127,7 @@ void proc_monitor() {
         ps_b.open(command_);
         sleep(1);
         if (zombie_pid(ps_a.pid)){
-            LOGD("proc_monitor: logcat failback\n");
+            LOGD("proc_monitor: logcat fallback with no \"--uid 0\"\n");
             ps_a.term();
             pipe_fp = ps_b.pid;
             pipe_in = ps_b.in;
@@ -1101,7 +1138,7 @@ void proc_monitor() {
             pipe_in = ps_a.in;
             pipe_out = ps_a.out;
         }
-        LOGD("proc_monitor: new pipe PID=[%d]\n", pipe_fp);
+        LOGD("proc_monitor: attach logcat PID=[%d]\n", pipe_fp);
         continue;
 
         collect_log:
@@ -1138,6 +1175,7 @@ void proc_monitor() {
 
     while (1){
         pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+        sulist_init_zygote();
         // check if pipe is dead, maybe logd is off?
         if (!zombie_pid(pipe_fp)) goto collect_log_;
         kill_pipe();
@@ -1146,7 +1184,7 @@ void proc_monitor() {
         sleep(1);
         pipe_in = ps_a.in;
         pipe_out = ps_a.out;
-        LOGD("proc_monitor: new pipe PID=[%d]\n", pipe_fp);
+        LOGD("proc_monitor: attach logcat PID=[%d]\n", pipe_fp);
         continue;
 
         collect_log_:
@@ -1160,12 +1198,12 @@ void proc_monitor() {
         const char *log = strstr(buf, "[");
 
         // new zygote
-        if (strstr(buf, "boot_progress_pms_ready") && !log) {
+        if (!log) {
+            LOGD("proc_monitor: request new zygote\n");
             check_zygote();
             continue;
         }
         // filter logcat to get pid
-        if (!log) continue;
         sscanf(log, "[%*d,%d", &p);
         // any process can print log with custom name
         // check if this is really system_server log
