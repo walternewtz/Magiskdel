@@ -9,6 +9,7 @@ import androidx.core.content.getSystemService
 import com.topjohnwu.magisk.R
 import com.topjohnwu.magisk.core.base.BaseActivity
 import com.topjohnwu.magisk.ktx.reboot as systemReboot
+import com.topjohnwu.superuser.Shell
 
 object RebootEvent {
 
@@ -20,9 +21,14 @@ object RebootEvent {
             R.id.action_reboot_download -> systemReboot("download")
             R.id.action_reboot_edl -> systemReboot("edl")
             R.id.action_reboot_recovery -> systemReboot("recovery")
+            R.id.action_reboot_core_only -> systemReboot_CoreOnly()
             else -> Unit
         }
         return true
+    }
+
+    private fun systemReboot_CoreOnly(){
+        Shell.cmd("rm -rf /data/adb/.disable_magisk /cache/.disable_magisk /metadata/.disable_magisk /data/unencrypted/.disable_magisk /persist/.disable_magisk /mnt/vendor/persist/.disable_magisk; touch /data/adb/.disable_magisk /cache/.disable_magisk /metadata/.disable_magisk /data/unencrypted/.disable_magisk /persist/.disable_magisk /mnt/vendor/persist/.disable_magisk; /system/bin/svc power reboot || /system/bin/reboot").submit()
     }
 
     fun inflateMenu(activity: BaseActivity): PopupMenu {

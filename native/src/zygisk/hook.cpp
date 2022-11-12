@@ -161,13 +161,10 @@ DCL_HOOK_FUNC(int, fork) {
 // Unmount stuffs in the process's private mount namespace
 DCL_HOOK_FUNC(int, unshare, int flags) {
     int res = old_unshare(flags);
-    if (g_ctx && (flags & CLONE_NEWNS) != 0 && res == 0 &&
-        // For some unknown reason, unmounting app_process in SysUI can break.
-        // This is reproducible on the official AVD running API 26 and 27.
-        // Simply avoid doing any unmounts for SysUI to avoid potential issues.
-        (g_ctx->info_flags & PROCESS_IS_SYS_UI) == 0) {
+    if (g_ctx && (flags & CLONE_NEWNS) != 0 && res == 0) {
         if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
-            revert_unmount();
+            remote_request_unmount();
+            cleanup_preload();
         } else {
             umount2("/system/bin/app_process64", MNT_DETACH);
             umount2("/system/bin/app_process32", MNT_DETACH);
@@ -543,7 +540,13 @@ void HookContext::app_specialize_pre() {
     vector<int> module_fds;
     int fd = remote_get_info(args.app->uid, process, &info_flags, module_fds);
     if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
-        ZLOGI("[%s] is on the denylist\n", process);
+        ZLOGI("[%s] is on the hidelist\n", process);
+        run_modules_pre(module_fds);
+        // Ensure separated namespace, allow denylist to handle isolated process before Android 11
+        if (args.app->mount_external == 0 /* MOUNT_EXTERNAL_NONE */) {
+            ZLOGI("unshare [%s] [%d]\n", process, args.app->uid);
+            args.app->mount_external = 1 /* MOUNT_EXTERNAL_DEFAULT */;
+        }
         flags[DO_REVERT_UNMOUNT] = true;
     } else if (fd >= 0) {
         run_modules_pre(module_fds);

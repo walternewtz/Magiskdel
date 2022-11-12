@@ -1,4 +1,5 @@
 #include <sys/mount.h>
+#include <stdio.h>
 
 #include <magisk.hpp>
 #include <sepolicy.hpp>

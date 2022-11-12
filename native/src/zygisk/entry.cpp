@@ -124,8 +124,7 @@ extern "C" void zygisk_log_write(int prio, const char *msg, int len) {
 }
 
 static inline bool should_load_modules(uint32_t flags) {
-    return (flags & UNMOUNT_MASK) != UNMOUNT_MASK &&
-           (flags & PROCESS_IS_MAGISK_APP) != PROCESS_IS_MAGISK_APP;
+    return (flags & PROCESS_IS_MAGISK_APP) != PROCESS_IS_MAGISK_APP;
 }
 
 int remote_get_info(int uid, const char *process, uint32_t *flags, vector<int> &fds) {
@@ -140,6 +139,16 @@ int remote_get_info(int uid, const char *process, uint32_t *flags, vector<int> &
     }
     return -1;
 }
+
+int remote_request_unmount() {
+    if (int fd = zygisk_request(ZygiskRequest::DO_UNMOUNT); fd >= 0) {
+        int ret = read_int(fd);
+        close(fd);
+        return ret;
+    }
+    return -1;
+}
+
 
 // The following code runs in magiskd
 
@@ -304,11 +313,9 @@ static void get_process_info(int client, const sock_cred *cred) {
     int manager_app_id = get_manager();
     if (to_app_id(uid) == manager_app_id) {
         flags |= PROCESS_IS_MAGISK_APP;
-    } else if (to_app_id(uid) == sys_ui_app_id) {
-        flags |= PROCESS_IS_SYS_UI;
     }
     if (denylist_enforced) {
-        flags |= DENYLIST_ENFORCING;
+        flags |= MAGISKHIDE_ENABLED;
     }
     if (uid_granted_root(uid)) {
         flags |= PROCESS_GRANTED_ROOT;
@@ -371,6 +378,11 @@ static void get_moddir(int client) {
     close(dfd);
 }
 
+static void do_unmount(int client, const sock_cred *cred) {
+    LOGD("zygisk: cleanup mount namespace for pid=[%d]\n", cred->pid);
+    revert_daemon(cred->pid, client);
+}
+
 void zygisk_handler(int client, const sock_cred *cred) {
     int code = read_int(client);
     char buf[256];
@@ -396,6 +408,9 @@ void zygisk_handler(int client, const sock_cred *cred) {
         break;
     case ZygiskRequest::GET_MODDIR:
         get_moddir(client);
+        break;
+    case ZygiskRequest::DO_UNMOUNT:
+        do_unmount(client, cred);
         break;
     default:
         // Unknown code

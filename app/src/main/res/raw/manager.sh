@@ -39,7 +39,14 @@ cp_readlink() {
 fix_env() {
   # Cleanup and make dirs
   rm -rf $MAGISKBIN/*
-  mkdir -p $MAGISKBIN 2>/dev/null
+  if [ -d /data/unencrypted ]; then
+      rm -rf $MAGISKBIN
+      rm -rf /data/unencrypted/MAGISKBIN/*
+      mkdir -p /data/unencrypted/MAGISKBIN
+      ln -s ../unencrypted/MAGISKBIN $MAGISKBIN
+  else
+      mkdir -p $MAGISKBIN 2>/dev/null
+  fi
   chmod 700 $NVBASE
   cp_readlink $1 $MAGISKBIN
   rm -rf $1
@@ -62,6 +69,7 @@ direct_install() {
 
   rm -f $1/new-boot.img
   fix_env $1
+  install_addond "$3"
   run_migrations
   copy_sepolicy_rules
 
@@ -129,6 +137,23 @@ EOF
   cd /
 }
 
+add_riru_core_module(){
+    [ -d $MAGISKTMP/modules/riru-core ] && return
+    mkdir -p $MAGISKTMP/modules/riru-core
+    cat << EOF > $MAGISKTMP/modules/riru-core/module.prop
+id=riru-core
+name=Riru
+version=N/A
+versionCode=0
+author=Rikka, yujincheng08
+description=Riru module is not installed. Click update button to install the module.
+updateJson=https://huskydg.github.io/external/riru-core/info.json
+EOF
+    cd /
+}
+
+
+
 adb_pm_install() {
   local tmp=/data/local/tmp/temp.apk
   cp -f "$1" $tmp
@@ -151,7 +176,7 @@ check_boot_ramdisk() {
   $ISAB && return 0
 
   # If we are using legacy SAR, but not A/B, assume we do not have ramdisk
-  if grep ' / ' /proc/mounts | grep -q '/dev/root'; then
+  if grep ' / ' /proc/mounts | grep -q '^/dev/root'; then
     # Override recovery mode to true
     RECOVERYMODE=true
     return 1
@@ -191,7 +216,7 @@ mount_partitions() {
   [ "$(getprop ro.build.ab_update)" = "true" ] && SLOT=$(getprop ro.boot.slot_suffix)
   # Check whether non rootfs root dir exists
   SYSTEM_ROOT=false
-  grep ' / ' /proc/mounts | grep -qv 'rootfs' && SYSTEM_ROOT=true
+  ! is_rootfs && SYSTEM_ROOT=true
 }
 
 get_flags() {
@@ -215,6 +240,128 @@ run_migrations() { return; }
 
 grep_prop() { return; }
 
+##############################
+# Magisk Delta Custom script
+##############################
+
+is_delta(){
+if magisk -v | grep -q "\-delta"; then
+    return 0
+fi
+return 1
+}
+
+unload_magisk(){
+    magisk --stop
+}
+
+
+coreonly(){
+    local i presistdir="/data/adb /data/unencrypted /persist /mnt/vendor/persist /cache /metadata"
+    if [ "$1" == "enable" ] || [ "$1" == "disable" ]; then
+        for i in $presistdir; do
+            rm -rf "$i/.disable_magisk"
+            [ "$1" == "disable" ] || touch "$i/.disable_magisk"
+        done
+        return 0
+    else
+        for i in $presistdir; do
+            [ -e "$i/.disable_magisk" ] && return 0
+        done
+        return 1
+    fi
+}
+
+use_full_magisk(){
+    [ "$(magisk --path)" == "/system/xbin" ] && return 1
+    return 0
+}
+
+install_addond(){
+    local installDir="$MAGISKBIN"
+    local AppApkPath="$1"
+    addond=/system/addon.d
+    test ! -d $addond && return
+    ui_print "- Adding addon.d survival script"
+    BLOCKNAME="/dev/block/system_block.$(random_str 5 20)"
+    rm -rf "$BLOCKNAME"
+    if is_rootfs; then
+        mkblknode "$BLOCKNAME" /system
+    else
+        mkblknode "$BLOCKNAME"  /
+    fi
+    blockdev --setrw "$BLOCKNAME"
+    rm -rf "$BLOCKNAME"
+    mount -o rw,remount /
+    mount -o rw,remount /system
+    rm -rf $addond/99-magisk.sh 2>/dev/null
+    rm -rf $addond/magisk 2>/dev/null
+    mkdir -p $addond/magisk
+    cp -prLf "$installDir"/. $addond/magisk || { ui_print "! Failed to install addon.d"; return; }
+    mv $addond/magisk/boot_patch.sh $addond/magisk/boot_patch.sh.in
+    mv $addond/magisk/addon.d.sh $addond/99-magisk.sh
+    cp "$AppApkPath" $addond/magisk/magisk.apk
+    mount -o ro,remount /
+    mount -o ro,remount /system
+}
+    
+check_system_magisk(){
+    ALLOWSYSTEMINSTALL=true
+    local SHA1 SYSTEMMODE=false
+    if command -v magisk &>/dev/null; then
+       local MAGISKTMP="$(magisk --path)/.magisk" || return
+       getvar SHA1
+       getvar SYSTEMMODE
+    fi
+    # do not allow installing magisk as system mode if Magisk is in boot image
+    [ -z "$SHA1" ] || ALLOWSYSTEMINSTALL=false
+    # allow if SYSTEMMODE=true
+    [ "$SYSTEMMODE" == "true" ] && ALLOWSYSTEMINSTALL=true
+}
+
+clean_hidelist(){
+    local tab=hidelist
+    if [ "$SULISTMODE" == "true" ]; then
+        tab=sulist
+    fi
+    local PACKAGE_NAME="$(magisk --sqlite "SELECT package_name FROM $tab WHERE package_name NOT IN ('isolated')")"
+    local PACKAGE_LIST=""
+    # isolation service
+    local PACKAGE_ISOLIST="$(magisk --sqlite "SELECT process FROM $tab WHERE package_name IN ('isolated')")"
+    local s t exist
+    for s in $PACKAGE_NAME; do
+        if [ "${s: 13}" == "isolated" ]; then
+            continue
+        fi
+        exist=false
+        for t in $PACKAGE_LIST; do
+            if [ "$t" == "${s: 13}" ]; then
+                exist=true
+                break;
+            fi
+        done
+        if ! $exist; then
+            PACKAGE_LIST="$PACKAGE_LIST ${s: 13}"
+        fi
+    done
+    for s in $PACKAGE_LIST; do
+        if [ ! -d "/data/data/$s" ]; then
+            magisk --hide rm "$s"
+            for t in $(echo "$PACKAGE_ISOLIST" | grep "$s"); do
+                t="${t: 8}"
+                magisk --hide rm isolated "$t"
+            done
+        fi
+    done
+}
+
+get_sulist_status(){
+    SULISTMODE=false
+    if magisk --hide sulist; then
+        SULISTMODE=true
+    fi
+}
+
 #############
 # Initialize
 #############
@@ -227,6 +374,8 @@ app_init() {
   run_migrations
   SHA1=$(grep_prop SHA1 $MAGISKTMP/config)
   check_encryption
+  check_system_magisk
+  get_sulist_status
 }
 
 export BOOTMODE=true
