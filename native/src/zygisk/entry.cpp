@@ -236,12 +236,12 @@ static int zygote_start_counts[] = { 0, 0 };
 #define zygote_start_reset(val) { zygote_start_counts[0] = val; zygote_start_counts[1] = val; }
 
 static void set_native_bridge() {
-    setprop(NATIVE_BRIDGE_PROP, LOADER_LIB);
+    setprop(NATIVE_BRIDGE_PROP, LOADER_LIB, false);
     ZLOGD("native bridge has been set\n");
 }
 
 static void reset_native_bridge() {
-    setprop(NATIVE_BRIDGE_PROP, orig_native_bridge.data());
+    setprop(NATIVE_BRIDGE_PROP, orig_native_bridge.data(), false);
     ZLOGD("native bridge has been reset\n");
 }
 

@@ -707,7 +707,6 @@ void magic_mount() {
         string zygisk_bin = MAGISKTMP + "/" ZYGISKBIN;
         mkdir(zygisk_bin.data(), 0);
         inject_zygisk_libs(system);
-        setprop(NATIVE_BRIDGE_PROP, LOADER_LIB);
     }
 
     if (!system->is_empty()) {
@@ -728,6 +727,10 @@ void magic_mount() {
         root->prepare();
         root->mount();
     }
+
+    if (zygisk_enabled) 
+        setprop(NATIVE_BRIDGE_PROP, LOADER_LIB, false);
+
     log_enabled = false;
 }
 
