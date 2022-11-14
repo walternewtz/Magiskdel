@@ -4,6 +4,7 @@
 #include <sys/mount.h>
 #include <android/log.h>
 #include <android/dlext.h>
+#include <resetprop.hpp>
 
 #include <base.hpp>
 #include <daemon.hpp>
@@ -13,26 +14,11 @@
 #include "zygisk.hpp"
 #include "module.hpp"
 #include "deny/deny.hpp"
+#include "native_bridge_callbacks.h"
 
 using namespace std;
 
 void *self_handle = nullptr;
-
-// Make sure /proc/self/environ is sanitized
-// Filter env and reset MM_ENV_END
-static void sanitize_environ() {
-    char *cur = environ[0];
-
-    for (int i = 0; environ[i]; ++i) {
-        // Copy all env onto the original stack
-        size_t len = strlen(environ[i]);
-        memmove(cur, environ[i], len + 1);
-        environ[i] = cur;
-        cur += len + 1;
-    }
-
-    prctl(PR_SET_MM, PR_SET_MM_ENV_END, cur, 0, 0);
-}
 
 [[gnu::destructor]] [[maybe_unused]]
 static void zygisk_cleanup_wait() {
@@ -43,34 +29,70 @@ static void zygisk_cleanup_wait() {
     }
 }
 
-static void *unload_first_stage(void *) {
-    // Wait 10us to make sure 1st stage is done
-    timespec ts = { .tv_sec = 0, .tv_nsec = 10000L };
-    nanosleep(&ts, nullptr);
-    unmap_all(HIJACK_BIN);
-    xumount2(HIJACK_BIN, MNT_DETACH);
-    return nullptr;
-}
-
-extern "C" void zygisk_inject_entry(void *handle) {
+extern "C" __used void* zygisk_inject_entry(void *handle, void *callbacks) {
     zygisk_logging();
     ZLOGD("load success\n");
-
-    char *ld = getenv("LD_PRELOAD");
-    if (char *c = strrchr(ld, ':')) {
-        *c = '\0';
-        setenv("LD_PRELOAD", ld, 1);  // Restore original LD_PRELOAD
-    } else {
-        unsetenv("LD_PRELOAD");
-    }
-
-    MAGISKTMP = getenv(MAGISKTMP_ENV);
     self_handle = handle;
+    void *orig_bridge = nullptr;
 
-    unsetenv(MAGISKTMP_ENV);
-    sanitize_environ();
+    do {
+        int fd = zygisk_request(ZygiskRequest::SETUP);
+        if (fd < 0 || read_int(fd)) {
+            ZLOGE("failed to connect to daemon\n");
+            exit(1);
+            break;
+        }
+
+        MAGISKTMP = read_string(fd);
+        ZLOGD("read magisktmp %s\n", MAGISKTMP.c_str());
+        auto orig_bridge_name = read_string(fd);
+        int sdk = read_int(fd);
+        close(fd);
+
+        if (orig_bridge_name.empty()) {
+            ZLOGE("failed to read orig bridge name\n");
+            break;
+        }
+
+        if (orig_bridge_name == "0") {
+            break;
+        }
+
+        orig_bridge = dlopen(orig_bridge_name.data(), RTLD_NOW);
+        if (orig_bridge == nullptr) {
+            ZLOGE("dlopen failed: %s", dlerror());
+            break;
+        }
+        auto *original_native_bridge_itf = dlsym(orig_bridge, "NativeBridgeItf");
+        if (original_native_bridge_itf == nullptr) {
+            ZLOGE("dlsym failed: %s\n", dlerror());
+            break;
+        }
+
+        auto callbacks_size = 0;
+        if (sdk >= __ANDROID_API_R__) {
+            callbacks_size = sizeof(NativeBridgeCallbacks<__ANDROID_API_R__>);
+        } else if (sdk == __ANDROID_API_Q__) {
+            callbacks_size = sizeof(NativeBridgeCallbacks<__ANDROID_API_Q__>);
+        } else if (sdk == __ANDROID_API_P__) {
+            callbacks_size = sizeof(NativeBridgeCallbacks<__ANDROID_API_P__>);
+        } else if (sdk == __ANDROID_API_O_MR1__) {
+            callbacks_size = sizeof(NativeBridgeCallbacks<__ANDROID_API_O_MR1__>);
+        } else if (sdk == __ANDROID_API_O__) {
+            callbacks_size = sizeof(NativeBridgeCallbacks<__ANDROID_API_O__>);
+        } else if (sdk == __ANDROID_API_N_MR1__) {
+            callbacks_size = sizeof(NativeBridgeCallbacks<__ANDROID_API_N_MR1__>);
+        } else if (sdk == __ANDROID_API_N__) {
+            callbacks_size = sizeof(NativeBridgeCallbacks<__ANDROID_API_N__>);
+        } else if (sdk == __ANDROID_API_M__) {
+            callbacks_size = sizeof(NativeBridgeCallbacks<__ANDROID_API_M__>);
+        }
+
+        memcpy(callbacks, original_native_bridge_itf, callbacks_size);
+    } while (false);
+
     hook_functions();
-    new_daemon_thread(&unload_first_stage, nullptr);
+    return orig_bridge;
 }
 
 // The following code runs in zygote/app process
@@ -136,15 +158,6 @@ int remote_get_info(int uid, const char *process, uint32_t *flags, vector<int> &
             fds = recv_fds(fd);
         }
         return fd;
-    }
-    return -1;
-}
-
-int remote_request_unmount() {
-    if (int fd = zygisk_request(ZygiskRequest::DO_UNMOUNT); fd >= 0) {
-        int ret = read_int(fd);
-        close(fd);
-        return ret;
     }
     return -1;
 }
@@ -224,8 +237,38 @@ static int zygote_start_counts[] = { 0, 0 };
 #define zygote_started (zygote_start_counts[0] + zygote_start_counts[1])
 #define zygote_start_reset(val) { zygote_start_counts[0] = val; zygote_start_counts[1] = val; }
 
-static void setup_files(int client, const sock_cred *cred) {
-    LOGD("zygisk: setup files for pid=[%d]\n", cred->pid);
+static void set_native_bridge() {
+    setprop(NATIVE_BRIDGE_PROP, LOADER_LIB, false);
+    ZLOGD("native bridge has been set\n");
+}
+
+static void reset_native_bridge() {
+    setprop(NATIVE_BRIDGE_PROP, orig_native_bridge.data(), false);
+    ZLOGD("native bridge has been reset\n");
+}
+
+void on_zygote_restart() {
+    if (zygote_start_counts[0] >= 5 || zygote_start_counts[1] >= 5) {
+        // Bootloop prevention
+        timespec ts{};
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        if (ts.tv_sec - last_zygote_start.tv_sec > 60) {
+            // This is very likely manual soft reboot
+            memcpy(&last_zygote_start, &ts, sizeof(ts));
+            zygote_start_reset(0);
+        } else {
+            // If any zygote relaunched more than 5 times within a minute,
+            // don't do any setups further to prevent bootloop.
+            zygote_start_reset(999);
+            LOGW("Zygote has restarted too much times, temporary disable zygisk\n");
+            return;
+        }
+    }
+    set_native_bridge();
+}
+
+static void setup(int client, const sock_cred *cred) {
+    LOGD("zygisk: setup for pid=[%d]\n", cred->pid);
 
     char buf[4096];
     if (!get_exe(cred->pid, buf, sizeof(buf))) {
@@ -249,56 +292,10 @@ static void setup_files(int client, const sock_cred *cred) {
     }
     ++zygote_start_count;
 
-    if (zygote_start_count >= 5) {
-        // Bootloop prevention
-        timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        if (ts.tv_sec - last_zygote_start.tv_sec > 60) {
-            // This is very likely manual soft reboot
-            memcpy(&last_zygote_start, &ts, sizeof(ts));
-            zygote_start_reset(1);
-        } else {
-            // If any zygote relaunched more than 5 times within a minute,
-            // don't do any setups further to prevent bootloop.
-            zygote_start_reset(999);
-            write_int(client, 1);
-            return;
-        }
-    }
-
-    // Ack
     write_int(client, 0);
-
-    // Hijack some binary in /system/bin to host loader
-    const char *hbin;
-    string mbin;
-    int app_fd;
-    if (is_64_bit) {
-        hbin = HIJACK_BIN64;
-        mbin = MAGISKTMP + "/" ZYGISKBIN "/loader64.so";
-        app_fd = app_process_64;
-    } else {
-        hbin = HIJACK_BIN32;
-        mbin = MAGISKTMP + "/" ZYGISKBIN "/loader32.so";
-        app_fd = app_process_32;
-    }
-
-    // Receive and bind mount loader
-    int ld_fd = xopen(mbin.data(), O_WRONLY | O_TRUNC | O_CREAT | O_CLOEXEC, 0755);
-    string ld_data = read_string(client);
-    xwrite(ld_fd, ld_data.data(), ld_data.size());
-    close(ld_fd);
-    setfilecon(mbin.data(), "u:object_r:" SEPOL_FILE_TYPE ":s0");
-    xmount(mbin.data(), hbin, nullptr, MS_BIND, nullptr);
-
-    send_fd(client, app_fd);
     write_string(client, MAGISKTMP);
-}
-
-static void magiskd_passthrough(int client) {
-    bool is_64_bit = read_int(client);
-    write_int(client, 0);
-    send_fd(client, is_64_bit ? app_process_64 : app_process_32);
+    write_string(client, orig_native_bridge);
+    write_int(client, SDK_INT);
 }
 
 extern bool uid_granted_root(int uid);
@@ -380,21 +377,75 @@ static void get_moddir(int client) {
     close(dfd);
 }
 
-static void do_unmount(int client, const sock_cred *cred) {
-    LOGD("zygisk: cleanup mount namespace for pid=[%d]\n", cred->pid);
-    revert_daemon(cred->pid, client);
+
+static void system_server_listener(int pid) {
+    char buf1[128];
+    char buf2[128];
+    ssprintf(buf1, sizeof(buf1), "/proc/%d/cmdline", pid);
+    for (int i = 0; i < 60; i++) {
+        sleep(1);
+        int fd = xopen(buf1, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            ZLOGE("system server %d maybe died\n", pid);
+            return;
+        }
+        xxread(fd, buf2, sizeof(buf2));
+        close(fd);
+        if (strncmp(buf2, "system_server", sizeof("system_server")) == 0) {
+            ZLOGD("system server %d started\n", pid);
+            reset_native_bridge();
+            return;
+        }
+    }
+    LOGW("zygisk: cannot detect system server %d start\n", pid);
+}
+
+static void zygote_listener(int fd) {
+    nice(18);
+    struct flock lock {
+        .l_type = F_WRLCK,
+        .l_whence = SEEK_SET,
+        .l_start = 0,
+        .l_len = 0
+    };
+    while (fcntl(fd, F_SETLKW, &lock) < 0) {
+        if (errno == EINTR) continue;
+        else {
+            PLOGE("get wr lock %d\n", fd);
+            close(fd);
+            return;
+        }
+    }
+    on_zygote_restart();
+    close(fd);
+    LOGW("zygisk: zygote maybe died\n");
+}
+
+static void on_system_server_forked(int client, int pid) {
+    char buf[4096];
+    ssprintf(buf, sizeof(buf), "%s/%s/%d", MAGISKTMP.data(), ZYGISKBIN, pid);
+
+    int ss_pid = read_int(client);
+    new_daemon_thread(reinterpret_cast<thread_entry>(system_server_listener), reinterpret_cast<void*>(ss_pid));
+
+    int fd1 = xopen(buf, O_CREAT | O_RDONLY | O_CLOEXEC);
+    send_fd(client, fd1);
+    close(fd1);
+    // wait remote set read lock
+    if (read_int(client)) {
+        ZLOGE("remote failed to get lock\n");
+        return;
+    }
+
+    int fd2 = xopen(buf, O_WRONLY | O_CLOEXEC);
+    unlink(buf);
+    new_daemon_thread(reinterpret_cast<thread_entry>(zygote_listener), reinterpret_cast<void*>(fd2));
 }
 
 void zygisk_handler(int client, const sock_cred *cred) {
     int code = read_int(client);
     char buf[256];
     switch (code) {
-    case ZygiskRequest::SETUP:
-        setup_files(client, cred);
-        break;
-    case ZygiskRequest::PASSTHROUGH:
-        magiskd_passthrough(client);
-        break;
     case ZygiskRequest::GET_INFO:
         get_process_info(client, cred);
         break;
@@ -411,8 +462,11 @@ void zygisk_handler(int client, const sock_cred *cred) {
     case ZygiskRequest::GET_MODDIR:
         get_moddir(client);
         break;
-    case ZygiskRequest::DO_UNMOUNT:
-        do_unmount(client, cred);
+    case ZygiskRequest::SETUP:
+        setup(client, cred);
+        break;
+    case ZygiskRequest::SYSTEM_SERVER_FORKED:
+        on_system_server_forked(client, cred->pid);
         break;
     default:
         // Unknown code

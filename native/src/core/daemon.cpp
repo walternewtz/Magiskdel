@@ -166,7 +166,6 @@ static void handle_request_async(int client, int code, const sock_cred &cred) {
         reboot();
         break;
     case MainRequest::ZYGISK:
-    case MainRequest::ZYGISK_PASSTHROUGH:
         zygisk_handler(client, &cred);
         break;
     default:
@@ -194,6 +193,7 @@ static void handle_request_sync(int client, int code) {
         break;
     case MainRequest::STOP_DAEMON:
         denylist_handler(-1, nullptr);
+        // TODO: clean zygisk props
         write_int(client, 0);
         // Terminate the daemon!
         exit(0);

@@ -5,10 +5,12 @@
 #include <vector>
 #include <daemon.hpp>
 
-#define MAGISKTMP_ENV  "MAGISKTMP"
+#define NATIVE_BRIDGE_PROP "ro.dalvik.vm.native.bridge"
 
-#define HIJACK_BIN64   "/system/bin/appwidget"
-#define HIJACK_BIN32   "/system/bin/bu"
+#define LOADER_LIB "libzygisk-ld.so"
+#define ZYGISK_LIB "libzygisk.so"
+
+extern std::string orig_native_bridge;
 
 namespace ZygiskRequest {
 enum : int {
@@ -17,8 +19,7 @@ enum : int {
     GET_LOG_PIPE,
     CONNECT_COMPANION,
     GET_MODDIR,
-    PASSTHROUGH,
-    DO_UNMOUNT,
+    SYSTEM_SERVER_FORKED,
     END
 };
 }
@@ -27,12 +28,10 @@ enum : int {
 #define ZLOGD(...) LOGD("zygisk64: " __VA_ARGS__)
 #define ZLOGE(...) LOGE("zygisk64: " __VA_ARGS__)
 #define ZLOGI(...) LOGI("zygisk64: " __VA_ARGS__)
-#define HIJACK_BIN HIJACK_BIN64
 #else
 #define ZLOGD(...) LOGD("zygisk32: " __VA_ARGS__)
 #define ZLOGE(...) LOGE("zygisk32: " __VA_ARGS__)
 #define ZLOGI(...) LOGI("zygisk32: " __VA_ARGS__)
-#define HIJACK_BIN HIJACK_BIN32
 #endif
 
 // Find the memory address + size of the pages matching name + inode
@@ -62,4 +61,4 @@ inline int zygisk_request(int req) {
     return fd;
 }
 
-int remote_request_unmount();
+void on_zygote_restart();
