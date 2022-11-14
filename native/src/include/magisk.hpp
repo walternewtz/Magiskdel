@@ -42,7 +42,6 @@ int magisk_main(int argc, char *argv[]);
 int denylist_cli(int argc, char *argv[]);
 int su_client_main(int argc, char *argv[]);
 int resetprop_main(int argc, char *argv[]);
-int app_process_main(int argc, char *argv[]);
 int zygisk_main(int argc, char *argv[]);
 bool check_envpath(const char* path);
 void recreate_sbin_v2(const char *mirror, bool use_bind_mount);

@@ -139,6 +139,7 @@ void revert_unmount(int pid){
         lazy_unmount(s.data());
 }
 
+/*
 void cleanup_preload() {
     char buff[256];
     off_t load_addr;
@@ -260,3 +261,4 @@ void cleanup_preload() {
 
     munmap(header_mmap, header_size);
 }
+*/
