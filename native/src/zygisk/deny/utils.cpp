@@ -1109,7 +1109,7 @@ void proc_monitor() {
         setitimer(ITIMER_REAL, &interval, nullptr);
     }
 
-    if (SDK_INT < 29 || sulist_enabled)
+    if (SDK_INT < 29)
         goto am_proc_start; // Android 9 and below
 
     for (;;){
