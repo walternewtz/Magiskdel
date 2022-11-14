@@ -61,7 +61,7 @@ void crawl_procfs(const std::function<bool(int)> &fn);
 void revert_daemon(int pid, int client = -1);
 void su_daemon(int pid);
 void revert_unmount(int pid = -1);
-void cleanup_preload();
+//void cleanup_preload();
 void do_check_pid(int client);
 
 //Event

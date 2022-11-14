@@ -36,7 +36,6 @@ enum : int {
     SQLITE_CMD,
     REMOVE_MODULES,
     ZYGISK,
-    ZYGISK_PASSTHROUGH,
 
     _STAGE_BARRIER_,
 
