@@ -14,6 +14,7 @@
 #include <libgen.h>
 
 #include "core.hpp"
+#include "zygisk/zygisk.hpp"
 
 using namespace std;
 
@@ -581,22 +582,70 @@ static void inject_magisk_bins(root_node *system) {
     delete bin->extract("supolicy");
 }
 
-vector<module_info> *module_list;
-int app_process_32 = -1;
-int app_process_64 = -1;
+#include <embed.hpp>
+#include <wait.h>
 
-#define mount_zygisk(bit)                                                               \
-if (access("/system/bin/app_process" #bit, F_OK) == 0) {                                \
-    app_process_##bit = xopen("/system/bin/app_process" #bit, O_RDONLY | O_CLOEXEC);    \
-    string zbin = zygisk_bin + "/app_process" #bit;                                     \
-    string mbin = MAGISKTMP + "/magisk" #bit;                                           \
-    int src = xopen(mbin.data(), O_RDONLY | O_CLOEXEC);                                 \
-    int out = xopen(zbin.data(), O_CREAT | O_WRONLY | O_CLOEXEC, 0);                    \
-    xsendfile(out, src, nullptr, INT_MAX);                                              \
-    close(out);                                                                         \
-    close(src);                                                                         \
-    clone_attr("/system/bin/app_process" #bit, zbin.data());                            \
-    bind_mount(zbin.data(), "/system/bin/app_process" #bit);                            \
+std::string orig_native_bridge = "0";
+
+static int extract_bin(const char *prog, const char *dst) {
+    int pid = xfork();
+    int status;
+    if (pid == 0) {
+        execl(prog, "", "zygisk", "extract", dst, nullptr);
+        PLOGE("execl");
+        exit(-2);
+    } else if (pid > 0) {
+        waitpid(pid, &status, 0);
+        return WEXITSTATUS(status);
+    } else {
+        return -1;
+    }
+}
+
+class zygisk_node : public node_entry {
+public:
+    explicit zygisk_node(const char *name) : node_entry(name, DT_REG, this) {}
+
+    void mount() override {
+        string src = MAGISKTMP + "/" ZYGISKBIN "/" + name();
+        const string &dir_name = parent()->node_path();
+        bool is_64bit = dir_name == "/system/lib64";
+        src += is_64bit ? ".64" : ".32";
+        string mbin = MAGISKTMP + "/magisk" + (is_64bit ? "64" : "32");
+        if (name() == LOADER_LIB) {
+            int r = extract_bin(mbin.data(), src.data());
+            if (r) {
+                LOGE("failed to extract zygisk-ld (%d)\n", r);
+                return;
+            }
+        } else if (name() == ZYGISK_LIB) {
+            int f = xopen(mbin.data(), O_RDONLY | O_CLOEXEC);
+            int out = xopen(src.data(), O_CREAT | O_WRONLY | O_CLOEXEC, 0);
+            xsendfile(out, f, nullptr, INT_MAX);
+            close(f);
+            close(out);
+        }
+        if (chmod(src.data(), 0644) < 0) PLOGE("chmod");
+        if (setfilecon(src.data(), "u:object_r:system_file:s0") < 0) PLOGE("setfilecon");
+        create_and_mount(src);
+    }
+};
+
+vector<module_info> *module_list;
+
+static void inject_zygisk_libs(root_node *system) {
+#define INJECT(bit, lib_path) \
+    if (access("/system/bin/app_process" #bit , F_OK) == 0) { \
+        auto lib = system->child<inter_node>(lib_path); \
+        if (!lib) { \
+            lib = new inter_node(lib_path, ""); \
+            system->insert(lib); \
+        } \
+        lib->insert(new zygisk_node(LOADER_LIB)); \
+        lib->insert(new zygisk_node(ZYGISK_LIB)); \
+    }
+    INJECT(64, "lib64")
+    INJECT(32, "lib")
 }
 
 void magic_mount() {
@@ -652,6 +701,14 @@ void magic_mount() {
         inject_magisk_bins(system);
     }
 
+    // Mount on top of modules to enable zygisk
+    if (zygisk_enabled) {
+        orig_native_bridge = getprop(NATIVE_BRIDGE_PROP);
+        string zygisk_bin = MAGISKTMP + "/" ZYGISKBIN;
+        mkdir(zygisk_bin.data(), 0);
+        inject_zygisk_libs(system);
+    }
+
     if (!system->is_empty()) {
         // Handle special read-only partitions
         for (const char *part : { "/vendor", "/product", "/system_ext", 
@@ -671,13 +728,9 @@ void magic_mount() {
         root->mount();
     }
 
-    // Mount on top of modules to enable zygisk
-    if (zygisk_enabled) {
-        string zygisk_bin = MAGISKTMP + "/" ZYGISKBIN;
-        mkdir(zygisk_bin.data(), 0);
-        mount_zygisk(32)
-        mount_zygisk(64)
-    }
+    if (zygisk_enabled) 
+        setprop(NATIVE_BRIDGE_PROP, LOADER_LIB, false);
+
     log_enabled = false;
 }
 

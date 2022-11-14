@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <bitset>
 #include <list>
+#include <sys/prctl.h>
 
 #include <lsplt.hpp>
 
@@ -165,10 +166,6 @@ DCL_HOOK_FUNC(int, unshare, int flags) {
     if (g_ctx && (flags & CLONE_NEWNS) != 0 && res == 0) {
         if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
             revert_unmount();
-            cleanup_preload();
-        } else {
-            umount2("/system/bin/app_process64", MNT_DETACH);
-            umount2("/system/bin/app_process32", MNT_DETACH);
         }
         // Restore errno back to 0
         errno = 0;
@@ -233,15 +230,8 @@ void vtable_entry(void *self, JNIEnv* env) {
     reinterpret_cast<decltype(&onVmCreated)>(gAppRuntimeVTable[N])(self, env);
 }
 
-// This method is a trampoline for swizzling android::AppRuntime vtable
-bool swizzled = false;
-DCL_HOOK_FUNC(void, setArgv0, void *self, const char *argv0, bool setProcName) {
-    if (swizzled) {
-        old_setArgv0(self, argv0, setProcName);
-        return;
-    }
-
-    ZLOGD("AndroidRuntime::setArgv0\n");
+void hookVirtualTable(void *self) {
+    ZLOGD("hook AndroidRuntime virtual table\n");
 
     // We don't know which entry is onVmCreated, so overwrite every one
     // We also don't know the size of the vtable, but 8 is more than enough
@@ -258,9 +248,6 @@ DCL_HOOK_FUNC(void, setArgv0, void *self, const char *argv0, bool setProcName) {
     // Swizzle C++ vtable to hook virtual function
     gAppRuntimeVTable = *reinterpret_cast<void***>(self);
     *reinterpret_cast<void***>(self) = new_table;
-    swizzled = true;
-
-    old_setArgv0(self, argv0, setProcName);
 }
 
 #undef DCL_HOOK_FUNC
@@ -469,6 +456,43 @@ int sigmask(int how, int signum) {
     return sigprocmask(how, &set, nullptr);
 }
 
+void create_zygote_lock(int pid) {
+    int holder_pid = old_fork();
+    if (holder_pid < 0) {
+        ZLOGE("failed to create holder: %s\n", strerror(errno));
+    }
+    if (holder_pid != 0) return;
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
+    if (getppid() == 1) exit(1);
+    int fd = zygisk_request(ZygiskRequest::SYSTEM_SERVER_FORKED);
+    do {
+        if (fd < 0) break;
+        write_int(fd, pid);
+        int lock_fd = recv_fd(fd);
+        if (lock_fd < 0) break;
+        ZLOGD("received lock fd in zygote:%d\n", lock_fd);
+        struct flock lock{
+                .l_type = F_RDLCK,
+                .l_whence = SEEK_SET,
+                .l_start = 0,
+                .l_len = 0
+        };
+        if (fcntl(lock_fd, F_SETLK, &lock) < 0) {
+            ZLOGE("failed to set lock in zygote: %s\n", strerror(errno));
+            write_int(fd, 1);
+            break;
+        }
+        write_int(fd, 0);
+        close(logd_fd.exchange(-1));
+        close(fd);
+        setprogname("lockholder");
+        while (true) {
+            pause();
+        }
+    } while (false);
+    close(fd);
+}
+
 void HookContext::fork_pre() {
     g_ctx = this;
     // Do our own fork before loading any 3rd party code
@@ -613,9 +637,9 @@ void HookContext::app_specialize_pre() {
     int fd = remote_get_info(args.app->uid, process, &info_flags, module_fds);
     if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
         ZLOGI("[%s] is on the hidelist\n", process);
+        logging_muted = true;
         // Ensure separated namespace, allow denylist to handle isolated process before Android 11
         if (args.app->mount_external == 0 /* MOUNT_EXTERNAL_NONE */) {
-            ZLOGI("unshare [%s] [%d]\n", process, args.app->uid);
             args.app->mount_external = 1 /* MOUNT_EXTERNAL_DEFAULT */;
         }
         flags[DO_REVERT_UNMOUNT] = true;
@@ -719,6 +743,9 @@ void HookContext::nativeForkSystemServer_post() {
         ZLOGV("post forkSystemServer\n");
         run_modules_post();
     }
+    if (pid > 0) {
+        create_zygote_lock(pid);
+    }
     fork_post();
 }
 
@@ -774,6 +801,9 @@ static void hook_register(ino_t inode, const char *symbol, void *new_func, void 
 #define XHOOK_REGISTER(PATH_REGEX, NAME) \
     XHOOK_REGISTER_SYM(PATH_REGEX, #NAME, NAME)
 
+
+#include "elf_util.h"
+
 void hook_functions() {
     default_new(xhook_list);
     default_new(jni_hook_list);
@@ -801,12 +831,19 @@ void hook_functions() {
             xhook_list->end());
 
     if (old_jniRegisterNativeMethods == nullptr) {
-        ZLOGD("jniRegisterNativeMethods not hooked, using fallback\n");
-        struct stat self_stat{};
-        stat("/proc/self/exe", &self_stat);
-        // android::AndroidRuntime::setArgv0(const char*, bool)
-        XHOOK_REGISTER_SYM(self_stat.st_ino, "_ZN7android14AndroidRuntime8setArgv0EPKcb", setArgv0);
-        hook_refresh();
+        do {
+            ZLOGD("jniRegisterNativeMethods not hooked, using fallback\n");
+
+            SandHook::ElfImg art("libandroid_runtime.so");
+
+            auto *GetRuntime = art.getSymbAddress<void*(*)()>("_ZN7android14AndroidRuntime10getRuntimeEv");
+
+            if (GetRuntime == nullptr) {
+                ZLOGE("GetRuntime is nullptr\n");
+                break;
+            }
+            hookVirtualTable(GetRuntime());
+        } while (false);
 
         // We still need old_jniRegisterNativeMethods as other code uses it
         // android::AndroidRuntime::registerNativeMethods(_JNIEnv*, const char*, const JNINativeMethod*, int)
