@@ -6,6 +6,10 @@
         android:title="@string/reboot" />
 
     <item
+        android:id="@+id/action_reboot_core_only"
+        android:title="@string/reboot_core_only" />
+
+    <item
         android:id="@+id/action_reboot_userspace"
         android:title="@string/reboot_userspace"
         android:visible="false" />

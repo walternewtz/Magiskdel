@@ -1,6 +1,9 @@
 #include <sys/mount.h>
 #include <map>
 #include <utility>
+#include <unistd.h>
+#include <limits.h>
+#include <string>
 
 #include <base.hpp>
 #include <magisk.hpp>
@@ -8,11 +11,17 @@
 #include <selinux.hpp>
 #include <resetprop.hpp>
 
+#include <libgen.h>
+
 #include "core.hpp"
 
 using namespace std;
 
-#define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
+static bool log_enabled = true;
+
+#define VLOGD(tag, from, to) if (log_enabled) LOGD("%-8s: %s <- %s\n", tag, to, from)
+
+#define DVLOGD(tag, target) if (log_enabled) LOGD("%-8s: %s\n", tag, target)
 
 #define TYPE_MIRROR  (1 << 0)    /* mount from mirror */
 #define TYPE_INTER   (1 << 1)    /* intermediate node */
@@ -30,9 +39,10 @@ class tmpfs_node;
 class module_node;
 class root_node;
 
+
 template<class T> static bool isa(node_entry *node);
 static int bind_mount(const char *from, const char *to) {
-    int ret = xmount(from, to, nullptr, MS_BIND, nullptr);
+    int ret = xmount(from, to, nullptr, MS_BIND | MS_REC, nullptr);
     if (ret == 0)
         VLOGD("bind_mnt", from, to);
     return ret;
@@ -54,7 +64,7 @@ public:
     bool is_dir() { return file_type() == DT_DIR; }
     bool is_lnk() { return file_type() == DT_LNK; }
     bool is_reg() { return file_type() == DT_REG; }
-    uint8_t type() { return node_type; }
+    uint8_t type() const { return node_type; }
     const string &name() { return _name; }
 
     // Don't call the following two functions before prepare
@@ -81,9 +91,9 @@ protected:
     void create_and_mount(const string &src);
 
     // Use top bit of _file_type for node exist status
-    bool exist() { return static_cast<bool>(_file_type & (1 << 7)); }
+    bool exist() const { return static_cast<bool>(_file_type & (1 << 7)); }
     void set_exist(bool b) { if (b) _file_type |= (1 << 7); else _file_type &= ~(1 << 7); }
-    uint8_t file_type() { return static_cast<uint8_t>(_file_type & ~(1 << 7)); }
+    uint8_t file_type() const { return static_cast<uint8_t>(_file_type & ~(1 << 7)); }
 
 private:
     friend class dir_node;
@@ -91,14 +101,14 @@ private:
     static bool should_be_tmpfs(node_entry *child);
 
     // Node properties
-    string _name;
-    uint8_t _file_type;
-    uint8_t node_type;
+    string _name{};
+    uint8_t _file_type{0};
+    uint8_t node_type{0};
 
-    dir_node *_parent = nullptr;
+    dir_node *_parent{nullptr};
 
     // Cache, it should only be used within prepare
-    string _node_path;
+    string _node_path{};
 };
 
 class dir_node : public node_entry {
@@ -222,14 +232,14 @@ class root_node : public dir_node {
 public:
     explicit root_node(const char *name) : dir_node(name, this), prefix("") {}
     explicit root_node(node_entry *node) : dir_node(node, this), prefix("/system") {}
-    const char * const prefix;
+    const char * const prefix{nullptr};
 };
 
 class inter_node : public dir_node {
 public:
     inter_node(const char *name, const char *module) : dir_node(name, this), module(module) {}
 private:
-    const char *module;
+    const char *module{nullptr};
     friend class module_node;
 };
 
@@ -388,7 +398,7 @@ tmpfs_node::tmpfs_node(node_entry *node) : dir_node(node, this) {
 // - Target does not exist
 // - Source or target is a symlink
 bool node_entry::should_be_tmpfs(node_entry *child) {
-    struct stat st;
+    struct stat st{};
     if (lstat(child->node_path().data(), &st) != 0) {
         return true;
     } else {
@@ -467,11 +477,23 @@ bool dir_node::collect_files(const char *module, int dfd) {
  * Mount Implementations
  ************************/
 
+static std::string do_readlink(std::string const& path) {
+    char buff[PATH_MAX];
+    ssize_t len = ::readlink(path.c_str(), buff, sizeof(buff)-1);
+    if (len != -1) {
+      buff[len] = '\0';
+      return std::string(buff);
+    }
+}
+
+
 void node_entry::create_and_mount(const string &src) {
     const string &dest = node_path();
     if (is_lnk()) {
-        VLOGD("cp_link", src.data(), dest.data());
-        cp_afc(src.data(), dest.data());
+        if (strcmp(do_readlink(src).data(), "/xxxxx") != 0){
+            VLOGD("cp_link", src.data(), dest.data());
+            cp_afc(src.data(), dest.data());
+        } else DVLOGD("remove", dest.data());
     } else {
         if (is_dir())
             xmkdir(dest.data(), 0);
@@ -598,6 +620,17 @@ void magic_mount() {
             load_prop_file(buf, false);
         }
 
+        // Load sepolicy.rule
+        strcpy(b, "sepolicy.rule");
+        if (access("/dev/.magisk_livepatch", F_OK) == 0 && access(buf, F_OK) == 0) {
+            LOGI("%s: applying [sepolicy.rule]\n", module);
+            char MAGISKPOLICY[PATH_MAX];
+            sprintf(MAGISKPOLICY, "%s/magiskpolicy", MAGISKTMP.data());
+            
+            auto ret = exec_command_sync(MAGISKPOLICY, "--live", "--apply", buf);
+            if (ret != 0) LOGW("%s: failed to apply [sepolicy.rule]\n", module);
+        }
+
         // Check whether skip mounting
         strcpy(b, "skip_mount");
         if (access(buf, F_OK) == 0)
@@ -614,14 +647,18 @@ void magic_mount() {
         system->collect_files(module, fd);
         close(fd);
     }
-    if (MAGISKTMP != "/sbin") {
+    if (MAGISKTMP != "/sbin" || !check_envpath("/sbin")) {
         // Need to inject our binaries into /system/bin
         inject_magisk_bins(system);
     }
 
     if (!system->is_empty()) {
         // Handle special read-only partitions
-        for (const char *part : { "/vendor", "/product", "/system_ext" }) {
+        for (const char *part : { "/vendor", "/product", "/system_ext", 
+            "/my_carrier", "my_company", "/my_engineering",
+            "/my_heytap", "/my_preload", "/my_product",
+            "/my_region", "/my_stock", "/prism",
+            "/optics", "/odm", "/my_manifest" }) {
             struct stat st{};
             if (lstat(part, &st) == 0 && S_ISDIR(st.st_mode)) {
                 if (auto old = system->extract(part + 1)) {
@@ -641,9 +678,25 @@ void magic_mount() {
         mount_zygisk(32)
         mount_zygisk(64)
     }
+    log_enabled = false;
 }
 
-static void prepare_modules() {
+void su_mount() {
+    node_entry::mirror_dir = MAGISKTMP + "/" MIRRDIR;
+
+    auto root = make_unique<root_node>("");
+    auto system = new root_node("system");
+    root->insert(system);
+    
+    // Need to inject our binaries into /system/bin
+    LOGD("su_mount: /system/bin <- magisk\n");
+    inject_magisk_bins(system);
+
+    root->prepare();
+    root->mount();
+}
+
+void prepare_modules() {
     // Upgrade modules
     if (auto dir = open_dir(MODULEUPGRADE); dir) {
         int ufd = dirfd(dir.get());
@@ -800,3 +853,4 @@ void exec_module_scripts(const char *stage) {
         [](const module_info &info) -> string_view { return info.name; });
     exec_module_scripts(stage, module_names);
 }
+
