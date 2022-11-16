@@ -261,6 +261,16 @@ mount_ro_ensure() {
   is_mounted $POINT || abort "! Cannot mount $POINT"
 }
 
+mount_ro_not_ensure() {
+  # We handle ro partitions only in recovery
+  $BOOTMODE && return 0
+  local PART=$1
+  local POINT=$2
+  mount_name "$PART" $POINT '-o ro'
+  is_mounted $POINT ||  { ui_print "WARNING: Cannot mount $POINT, skipped"; return 1; }
+  return 0
+}
+
 mount_partitions() {
   # Check A/B slot
   SLOT=`grep_cmdline androidboot.slot_suffix`
@@ -275,26 +285,28 @@ mount_partitions() {
     umount /system 2&>/dev/null
     umount /system_root 2&>/dev/null
   fi
-  mount_ro_ensure "system$SLOT app$SLOT" /system
-  if [ -f /system/init -o -L /system/init ]; then
-    SYSTEM_ROOT=true
-    setup_mntpoint /system_root
-    if ! mount --move /system /system_root; then
-      umount /system
-      umount -l /system 2>/dev/null
-      mount_ro_ensure "system$SLOT app$SLOT" /system_root
-    fi
-    mount -o bind /system_root/system /system
-  else
-    SYSTEM_ROOT=false
-    grep ' / ' /proc/mounts | grep -qv 'rootfs' || grep -q ' /system_root ' /proc/mounts && SYSTEM_ROOT=true
-  fi
-  # /vendor is used only on some older devices for recovery AVBv1 signing so is not critical if fails
-  [ -L /system/vendor ] && mount_name vendor$SLOT /vendor '-o ro'
-  $SYSTEM_ROOT && ui_print "- Device is system-as-root"
 
-  # Allow /system/bin commands (dalvikvm) on Android 10+ in recovery
-  $BOOTMODE || mount_apex
+  if mount_ro_not_ensure "system$SLOT app$SLOT" /system; then
+    if [ -f /system/init -o -L /system/init ]; then
+      SYSTEM_ROOT=true
+      setup_mntpoint /system_root
+      if ! mount --move /system /system_root; then
+        umount /system
+        umount -l /system 2>/dev/null
+        mount_ro_ensure "system$SLOT app$SLOT" /system_root
+      fi
+      mount -o bind /system_root/system /system
+    else
+      SYSTEM_ROOT=false
+      grep ' / ' /proc/mounts | grep -qv 'rootfs' || grep -q ' /system_root ' /proc/mounts && SYSTEM_ROOT=true
+    fi
+    # /vendor is used only on some older devices for recovery AVBv1 signing so is not critical if fails
+    [ -L /system/vendor ] && mount_name vendor$SLOT /vendor '-o ro'
+    $SYSTEM_ROOT && ui_print "- Device is system-as-root"
+
+    # Allow /system/bin commands (dalvikvm) on Android 10+ in recovery
+    $BOOTMODE || mount_apex
+  fi
 
   # Mount sepolicy rules dir locations in recovery (best effort)
   if ! $BOOTMODE; then
@@ -584,8 +596,9 @@ check_data() {
 
 find_magisk_apk() {
   local DBAPK
-  [ -z $APK ] && APK=/data/app/com.topjohnwu.magisk*/base.apk
-  [ -f $APK ] || APK=/data/app/*/com.topjohnwu.magisk*/base.apk
+  local PACKAGE=io.github.huskydg.magisk
+  [ -z $APK ] && APK=/data/app/${PACKAGE}*/base.apk
+  [ -f $APK ] || APK=/data/app/*/${PACKAGE}*/base.apk
   if [ ! -f $APK ]; then
     DBAPK=$(magisk --sqlite "SELECT value FROM strings WHERE key='requester'" 2>/dev/null | cut -d= -f2)
     [ -z $DBAPK ] && DBAPK=$(strings $NVBASE/magisk.db | grep -oE 'requester..*' | cut -c10-)
@@ -826,6 +839,411 @@ install_module() {
 
   ui_print "- Done"
 }
+
+##############################
+# Magisk Delta Custom script
+##############################
+
+# define
+MAGISKSYSTEMDIR="/system/etc/init/magisk"
+
+random_str(){
+local FROM
+local TO
+FROM="$1"; TO="$2"
+tr -dc A-Za-z0-9 </dev/urandom | head -c $(($FROM+$(($RANDOM%$(($TO-$FROM+1))))))
+}
+
+magiskrc(){
+local MAGISKTMP="/sbin"
+local SELINUX="$1"
+local pfs_svc="$(random_str 9 16)"
+local ls_svc="$(random_str 9 16)"
+
+local suexec_seclabel="-"
+local seclabel_service="u:r:su:s0"
+local seclabel_exec="-"
+
+if [ "$SELINUX" == true ]; then
+    suexec_seclabel="u:r:su:s0"
+    seclabel_service="u:r:magisk:s0"
+    seclabel_exec="u:r:magisk:s0"
+fi
+
+cat <<EOF
+
+on post-fs-data
+    start logd
+    exec $suexec_seclabel root root -- $MAGISKSYSTEMDIR/$magisk_name --mount-sbin
+    copy $MAGISKSYSTEMDIR/magisk64 $MAGISKTMP/magisk64
+    chmod 0755 $MAGISKTMP/magisk64
+    symlink ./$magisk_name $MAGISKTMP/magisk
+    exec $suexec_seclabel root root -- $MAGISKSYSTEMDIR/$magisk_name --install
+    copy $MAGISKSYSTEMDIR/magisk32 $MAGISKTMP/magisk32
+    chmod 0755 $MAGISKTMP/magisk32
+    copy $MAGISKSYSTEMDIR/magiskinit $MAGISKTMP/magiskinit
+    chmod 0755 $MAGISKTMP/magiskinit
+    copy $MAGISKSYSTEMDIR/magiskpolicy $MAGISKTMP/magiskpolicy
+    chmod 0755 $MAGISKTMP/magiskpolicy
+    exec $suexec_seclabel root root -- $MAGISKTMP/magiskpolicy --live --magisk "allow * magisk_file lnk_file *"
+    exec $seclabel_exec root root -- $MAGISKTMP/magiskinit -x manager $MAGISKTMP/stub.apk
+    write /dev/.magisk_livepatch 0
+    mkdir $MAGISKTMP/.magisk 700
+    mkdir $MAGISKTMP/.magisk/mirror 700
+    mkdir $MAGISKTMP/.magisk/block 700
+    copy $MAGISKSYSTEMDIR/config $MAGISKTMP/.magisk/config
+    rm /dev/.magisk_unblock
+    start $pfs_svc
+    wait /dev/.magisk_unblock 40
+    rm /dev/.magisk_unblock
+    rm /dev/.magisk_livepatch
+
+service $pfs_svc $MAGISKTMP/magisk --post-fs-data
+    user root
+    seclabel $seclabel_exec
+    oneshot
+
+service $ls_svc $MAGISKTMP/magisk --service
+    class late_start
+    user root
+    seclabel $seclabel_exec
+    oneshot
+
+on property:sys.boot_completed=1
+    mkdir /data/adb/magisk 755
+    exec $seclabel_exec root root -- $MAGISKTMP/magisk --boot-complete
+   
+on property:init.svc.zygote=restarting
+    exec $seclabel_exec root root -- $MAGISKTMP/magisk --zygote-restart
+   
+on property:init.svc.zygote=stopped
+    exec $seclabel_exec root root -- $MAGISKTMP/magisk --zygote-restart
+
+
+EOF
+}
+
+addond_magisk_system(){
+cat << DELTA
+#!/sbin/sh
+#
+# ADDOND_VERSION=2
+#
+# Magisk (System method) addon.d
+
+. /tmp/backuptool.functions
+
+list_files() {
+cat <<EOF
+etc/init/magisk/magisk32
+etc/init/magisk/magisk64
+etc/init/magisk/magiskinit
+etc/init/magisk/magiskpolicy
+etc/init/magisk.rc
+EOF
+}
+
+case "\$1" in
+  backup)
+    list_files | while read FILE DUMMY; do
+      backup_file \$S/"\$FILE"
+    done
+  ;;
+  restore)
+    list_files | while read FILE REPLACEMENT; do
+      R=""
+      [ -n "\$REPLACEMENT" ] && R="\$S/\$REPLACEMENT"
+      [ -f "\$C/\$S/\$FILE" ] && restore_file \$S/"\$FILE" "\$R"
+    done
+  ;;
+  pre-backup)
+    # Stub
+  ;;
+  post-backup)
+    # Stub
+  ;;
+  pre-restore)
+    # Stub
+  ;;
+  post-restore)
+    # Stub
+  ;;
+esac
+DELTA
+}
+
+remount_check(){
+    local mode="$1"
+    local part="$(realpath "$2")"
+    local ignore_not_exist="$3"
+    local i
+    if ! grep -q " $part " /proc/mounts && [ ! -z "$ignore_not_exist" ]; then
+        return "$ignore_not_exist"
+    fi
+    mount -o "$mode,remount" "$part"
+    local IFS=$'\t\n ,'
+    for i in $(cat /proc/mounts | grep " $part " | awk '{ print $4 }'); do
+        test "$i" == "$mode" && return 0
+    done
+    return 1
+}
+
+backup_restore(){
+    # if gz is not found and orig file is found, backup to gz
+    if [ ! -f "${1}.gz" ] && [ -f "$1" ]; then
+        gzip -k "$1" && return 0
+    elif [ -f "${1}.gz" ]; then
+    # if gz found, restore from gz
+        rm -rf "$1" && gzip -kdf "${1}.gz" && return 0
+    fi
+    return 1
+}
+
+cleanup_system_installation(){
+    rm -rf "$MIRRORDIR${MAGISKSYSTEMDIR}"
+    rm -rf "$MIRRORDIR${MAGISKSYSTEMDIR}.rc"
+    backup_restore "$MIRRORDIR/system/etc/init/bootanim.rc" \
+    && rm -rf "$MIRRORDIR/system/etc/init/bootanim.rc.gz"
+    if [ -e "$MIRRORDIR${MAGISKSYSTEMDIR}" ] || [ -e "$MIRRORDIR${MAGISKSYSTEMDIR}.rc" ]; then
+        return 1
+    fi
+}
+
+unmount_system_mirrors(){
+	if $BOOTMODE; then
+        umount -l "$MIRRORDIR"
+        rm -rf "$MIRRORDIR"
+    else
+        recovery_cleanup
+    fi
+}
+
+print_title_delta(){
+    print_title "Magisk Delta (Systemless Mode)" "by HuskyDG"
+    print_title "Powered by Magisk"
+    return 0
+}
+
+warn_system_ro(){
+    ui_print "! System partition is read-only"
+    unmount_system_mirrors
+    return 1
+}
+
+is_rootfs(){
+    local root_blkid="$(mountpoint -d /)"
+	if ! $BOOTMODE && [ -d /system_root ] && mountpoint /system_root; then
+        return 1
+    fi
+    if $BOOTMODE && [ "${root_blkid%:*}" == 0 ]; then
+        return 0
+    fi
+    return 1
+}
+
+mkblknode(){
+    local blk_mm="$(mountpoint -d "$2" | sed "s/:/ /g")"
+    mknod "$1" -m 666 b $blk_mm
+}
+
+force_mount(){
+    { mount "$1" "$2" || mount -o ro "$1" "$2" \
+    || mount -o ro -t ext4 "$1" "$2" \
+    || mount -o ro -t f2fs "$1" "$2" \
+    || mount -o rw -t ext4 "$1" "$2" \
+    || mount -o rw -t f2fs "$1" "$2"; } 2>/dev/null
+    remount_check rw "$2" || warn_system_ro
+}
+
+direct_install_system(){
+    print_title "Magisk Delta (System Mode)" "by HuskyDG"
+    print_title "Powered by Magisk"
+    api_level_arch_detect
+    local INSTALLDIR="$1"
+    local vphonegaga_titan=false
+        
+    ui_print "- Remount system partition as read-write"
+    local MIRRORDIR="/dev/sysmount_mirror" ROOTDIR SYSTEMDIR VENDORDIR
+
+    ROOTDIR="$MIRRORDIR/system_root"
+    SYSTEMDIR="$MIRRORDIR/system"
+    VENDORDIR="$MIRRORDIR/vendor"
+	
+	if $BOOTMODE; then
+        # make sure sysmount is clean
+        umount -l "$MIRRORDIR" 2>/dev/null
+        rm -rf "$MIRRORDIR"
+        mkdir "$MIRRORDIR" || return 1
+        mount -t tmpfs -o 'mode=0755' tmpfs "$MIRRORDIR" || return 1
+        mkdir "$MIRRORDIR/block"
+        if is_rootfs; then
+            ROOTDIR=/
+            mkblknode "$MIRRORDIR/block/system" /system
+            mkdir "$SYSTEMDIR"
+            force_mount "$MIRRORDIR/block/system" "$SYSTEMDIR" || return 1
+        else
+            mkblknode "$MIRRORDIR/block/system_root" /
+            mkdir "$ROOTDIR"
+            force_mount "$MIRRORDIR/block/system_root" "$ROOTDIR" || return 1
+            mkdir "$MIRRORDIR/block/system_root/sbin"
+            ln -fs ./system_root/system "$SYSTEMDIR"
+        fi
+
+        # check if /vendor is seperated fs
+        if mountpoint -q /vendor; then
+            mkblknode "$MIRRORDIR/block/vendor" /vendor
+            mkdir "$VENDORDIR"
+            force_mount "$MIRRORDIR/block/vendor" "$VENDORDIR" || return 1
+         else
+            ln -fs ./system/vendor "$VENDORDIR"
+        fi
+	else
+        local MIRRORDIR="/" ROOTDIR SYSTEMDIR VENDORDIR
+        ROOTDIR="$MIRRORDIR/system_root"
+        SYSTEMDIR="$MIRRORDIR/system"
+        VENDORDIR="$MIRRORDIR/vendor"
+        mount_partitions
+        mount_apex
+	fi
+		
+
+    ui_print "- Cleaning up"
+    local checkfile="$MIRRORDIR/system/.check_$(random_str 10 20)"
+    # test write, need atleast 20mb
+    dd if=/dev/zero of="$checkfile" bs=1024 count=20000 || { rm -rf "$checkfile"; ui_print "! Insufficient free space or system write protection"; cleanup_system_installation; return 1; }
+    rm -rf "$checkfile"
+    cleanup_system_installation || return 1
+
+    local magisk_applet=magisk32 magisk_name=magisk32
+    if [ "$IS64BIT" == true ]; then
+        magisk_name=magisk64
+        magisk_applet="magisk32 magisk64"
+    fi
+
+    ui_print "- Copy files to system partition"
+    mkdir -p "$MIRRORDIR$MAGISKSYSTEMDIR" || return 1
+    for magisk in $magisk_applet magiskpolicy magiskinit; do
+        cat "$INSTALLDIR/$magisk" >"$MIRRORDIR$MAGISKSYSTEMDIR/$magisk" || { ui_print "! Unable to write Magisk binaries to system"; cleanup_system_installation; return 1; }
+    done
+    echo -e "SYSTEMMODE=true\nRECOVERYMODE=false" >"$MIRRORDIR$MAGISKSYSTEMDIR/config"
+    chcon -R u:object_r:system_file:s0 "$MIRRORDIR$MAGISKSYSTEMDIR"
+    chmod -R 700 "$MIRRORDIR$MAGISKSYSTEMDIR"
+
+    if [ "$API" -gt 24 ]; then
+
+        # test live patch
+        local SELINUX=true
+        if [ -d "/sys/fs/selinux" ]; then
+            ui_print "- Check if kernel can use dynamic sepolicy patch"
+            if ! "$INSTALLDIR/magiskpolicy" --live "permissive su" &>/dev/null; then
+                ui_print "! Kernel does not support dynamic sepolicy patch"
+                cleanup_system_installation
+                unmount_system_mirrors
+                return 1
+            fi
+            if ! is_rootfs; then
+              {
+                ui_print "- Patch sepolicy file"
+                local sepol file
+                for file in /vendor/etc/selinux/precompiled_sepolicy /system_root/odm/etc/selinux/precompiled_sepolicy /system/etc/selinux/precompiled_sepolicy /system_root/sepolicy /system_root/sepolicy_debug /system_root/sepolicy.unlocked; do
+                    if [ -f "$MIRRORDIR$file" ]; then
+                        sepol="$file"
+                        break
+                    fi
+                done
+                if [ -z "$sepol" ]; then
+                    ui_print "! Cannot find sepolicy file"
+                    cleanup_system_installation
+                    unmount_system_mirrors
+                    return 1
+                else
+                    ui_print "- Sepolicy file is $sepol"
+                    backup_restore "$MIRRORDIR$sepol"
+                    if ! is_rootfs && ! "$INSTALLDIR/magiskpolicy" --load "$MIRRORDIR$sepol" --save "$MIRRORDIR$sepol" --magisk "allow * magisk_file lnk_file *" "allow su * * *" "permissive su" &>/dev/null; then
+                        ui_print "! Sepolicy failed to patch"
+                        cleanup_system_installation
+                        unmount_system_mirrors
+                        return 1
+                    fi
+                fi
+              }
+            fi
+        else
+            SELINUX=false
+            ui_print "- SeLinux is disabled, no need to patch!"
+        fi
+        ui_print "- Add init boot script"
+        {
+            hijackrc="$MIRRORDIR/system/etc/init/magisk.rc"
+            if [ -f "$MIRRORDIR/system/etc/init/bootanim.rc" ]; then
+                backup_restore "$MIRRORDIR/system/etc/init/bootanim.rc" && hijackrc="$MIRRORDIR/system/etc/init/bootanim.rc"
+            fi
+        }
+        echo "$(magiskrc $SELINUX)" >>"$hijackrc" || return 1
+        
+        if [ -d "$MIRRORDIR/system/addon.d" ]; then
+            ui_print "- Add Magisk survival script"
+            rm -rf "$MIRRORDIR/system/addon.d/99-magisk.sh"
+            echo "$addond_magisk_system" >"$MIRRORDIR/system/addon.d/99-magisk.sh"
+        fi
+    elif [ "$API" -gt 19 ]; then
+        cat "$INSTALLDIR/busybox" >"$MIRRORDIR$MAGISKSYSTEMDIR/busybox" || { ui_print "! Unable to write Magisk binaries to system"; cleanup_system_installation; return 1; }
+        chmod 755 "$MIRRORDIR$MAGISKSYSTEMDIR/busybox"
+        if [ ! -f "$MIRRORDIR/system/bin/app_process.orig" ]; then
+            rm -rf "$MIRRORDIR/system/bin/app_process.orig"
+            mv -f "$MIRRORDIR/system/bin/app_process" "$MIRRORDIR/system/bin/app_process.orig"
+        fi
+        rm -rf "$MIRRORDIR/system/bin/app_process"
+        # hijack app_process to launch magisk su
+        cat <<EOF >"$MIRRORDIR/system/bin/app_process"
+#!/system/etc/init/magisk/busybox sh
+set -o standalone
+setenforce 0
+setup_magisk(){
+    "$MAGISKSYSTEMDIR/$magisk_name" --mount-sbin
+    cp -af "$MAGISKSYSTEMDIR/magisk64" /sbin/magisk64
+    cp -af "$MAGISKSYSTEMDIR/magisk32" /sbin/magisk32
+    cp -af "$MAGISKSYSTEMDIR/magiskinit" /sbin/magiskinit
+    cp -af "$MAGISKSYSTEMDIR/magiskpolicy" /sbin/magiskpolicy
+    chmod 755 /sbin/magisk64 /sbin/magisk32 /sbin/magiskpolicy /sbin/magiskinit
+    ln -s ./$magisk_name /sbin/magisk
+    /sbin/magisk --install
+    /sbin/magiskinit -x manager /sbin/stub.apk
+    mkdir -p /sbin/.magisk/mirror
+    mkdir -p /sbin/.magisk/block
+    echo -e "SYSTEMMODE=true\nRECOVERYMODE=false" >/sbin/.magisk/config
+    # run magisk daemon
+    /sbin/magisk --post-fs-data
+	i=0
+    while [ ! -f /dev/.magisk_unblock ]; do
+        i=\$((\$i+1))
+		if [ "\$i" -gt 40 ]; then
+            break
+        fi
+        sleep 1;
+    done
+    rm -rf /dev/.magisk_unblock
+    mount --bind /system/bin/app_process.orig "\$(realpath "\$0")"
+    /sbin/magisk --service
+    (
+      while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 1; done
+      /sbin/magisk --boot-complete
+    ) &
+} 
+
+setup_magisk; exec /system/bin/app_process.orig "\$@"
+EOF
+        chmod 755 "$MIRRORDIR/system/bin/app_process"
+    fi
+
+    unmount_system_mirrors
+	$BOOTMODE || recovery_cleanup
+    fix_env "$INSTALLDIR"
+    true
+    return 0
+}
+
+
 
 ##########
 # Presets
