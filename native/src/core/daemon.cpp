@@ -17,7 +17,10 @@
 
 using namespace std;
 
+void perform_check_bootloop();
+
 int SDK_INT = -1;
+bool HAVE_32 = false;
 string MAGISKTMP;
 
 bool RECOVERY_MODE = false;
@@ -147,6 +150,7 @@ static void handle_request_async(int client, int code, const sock_cred &cred) {
         LOGI("** zygote restarted\n");
         pkg_xml_ino = 0;
         prune_su_access();
+        perform_check_bootloop();
         break;
     case MainRequest::SQLITE_CMD:
         exec_sql(client);
@@ -199,7 +203,7 @@ static bool is_client(pid_t pid) {
     char path[32];
     sprintf(path, "/proc/%d/exe", pid);
     struct stat st{};
-    return !(stat(path, &st) || st.st_dev != self_st.st_dev || st.st_ino != self_st.st_ino);
+    return !(stat(path, &st) || st.st_size != self_st.st_size);
 }
 
 static void handle_request(pollfd *pfd) {
@@ -352,7 +356,15 @@ static void daemon_entry() {
             SDK_INT = parse_int(sdk);
         }
     }
+    auto cpu64 = getprop("ro.product.cpu.abilist64");
+    auto cpu32 = getprop("ro.product.cpu.abilist32");
     LOGI("* Device API level: %d\n", SDK_INT);
+    if (!cpu64.empty())
+        LOGI("* CPU ABI64: %s\n", cpu64.data());
+    if (!cpu32.empty()) {
+        LOGI("* CPU ABI32: %s\n", cpu32.data());
+        HAVE_32 = true;
+    }
 
     restore_tmpcon();
 
@@ -364,7 +376,6 @@ static void daemon_entry() {
             return true;
         });
     }
-    rm_rf((MAGISKTMP + "/" ROOTOVL).data());
 
     // Load config status
     auto config = MAGISKTMP + "/" INTLROOT "/config";
