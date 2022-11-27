@@ -23,10 +23,11 @@ static void lazy_unmount(const char* mountpoint) {
 #define TMPFS_MNT(dir) (mentry->mnt_type == "tmpfs"sv && str_starts(mentry->mnt_dir, "/" #dir))
 
 void root_mount(int pid) {
-    if (switch_mnt_ns(pid))
-        return;
-
-    LOGD("su_policy: handling PID=[%d]\n", pid);
+    if (pid > 0){
+        if (switch_mnt_ns(pid))
+            return;
+        LOGD("su_policy: handling PID=[%d]\n", pid);
+    }
 
     xmount(nullptr, "/", nullptr, MS_PRIVATE | MS_REC, nullptr);
 
