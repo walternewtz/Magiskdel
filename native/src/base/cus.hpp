@@ -33,3 +33,7 @@ struct pstream {
 int bind_mount_(const char *from, const char *to);
 int tmpfs_mount(const char *from, const char *to);
 
+bool setcurrent(const char *con, int count);
+int getcurrent(char *con, int count);
+bool set_magiskcon();
+

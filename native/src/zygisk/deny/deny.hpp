@@ -60,9 +60,11 @@ void crawl_procfs(const std::function<bool(int)> &fn);
 // Revert
 void revert_daemon(int pid, int client = -1);
 void su_daemon(int pid);
+void root_mount(int pid = -1);
 void revert_unmount(int pid = -1);
 //void cleanup_preload();
 void do_check_pid(int client);
+void unmount_zygote();
 
 //Event
 void disable_monitor();

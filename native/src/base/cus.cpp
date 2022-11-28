@@ -6,6 +6,7 @@
 #include <signal.h>
 
 #include <base.hpp>
+#include <selinux.hpp>
 
 #define READ 0
 #define WRITE 1
@@ -75,4 +76,29 @@ int tmpfs_mount(const char *from, const char *to){
     return ret;
 }
 
+bool setcurrent(const char *con, int count){
+    int fd = open("/proc/self/attr/current", O_WRONLY, 0666);
+    char buf[1024];
+    if (fd == -1) return false;
+    write(fd, con, count);
+    close(fd);
+    fd = open("/proc/self/attr/current", O_RDONLY, 0666);
+    if (fd == -1) return false;
+    read(fd, buf, sizeof(buf));
+    close(fd);
+    if (strcmp(buf,con)==0) return true;
+    return false;
+}
 
+int getcurrent(char *con, int count){
+    int fd = open("/proc/self/attr/current", O_RDONLY, 0666);
+    if (fd == -1) return -1;
+    read(fd, con, count);
+    close(fd);
+    return 0;
+}
+
+bool set_magiskcon(){
+    const char *magiskcon = "u:r:" SEPOL_PROC_DOMAIN ":s0";
+    return setcurrent(magiskcon, strlen(magiskcon));
+}

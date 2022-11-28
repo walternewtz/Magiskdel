@@ -8,7 +8,7 @@
 
 #include "deny.hpp"
 
-#define hide_version 2
+#define hide_version 3
 
 using namespace std;
 
@@ -179,10 +179,10 @@ int denylist_cli(int argc, char **argv) {
     	fprintf(stderr, "SuList is enforced\n");
         return 0;
     case DenyResponse::ITEM_EXIST:
-        fprintf(stderr, "Target already exists in hidelist\n");
+        fprintf(stderr, "Target already exists in list\n");
         goto return_code;
     case DenyResponse::ITEM_NOT_EXIST:
-        fprintf(stderr, "Target does not exist in hidelist\n");
+        fprintf(stderr, "Target does not exist in list\n");
         goto return_code;
     case DenyResponse::NO_NS:
         fprintf(stderr, "The kernel does not support mount namespace\n");

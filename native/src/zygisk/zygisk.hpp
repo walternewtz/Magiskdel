@@ -20,6 +20,7 @@ enum : int {
     CONNECT_COMPANION,
     GET_MODDIR,
     SYSTEM_SERVER_FORKED,
+    SULIST_UNMOUNT,
     END
 };
 }
@@ -62,3 +63,4 @@ inline int zygisk_request(int req) {
 }
 
 void on_zygote_restart();
+int remote_get_sulist();

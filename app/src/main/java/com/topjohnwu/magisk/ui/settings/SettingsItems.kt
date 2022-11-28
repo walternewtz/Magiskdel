@@ -236,8 +236,6 @@ object Zygisk : BaseSettingsItem.Toggle() {
             notifyPropertyChanged(BR.description)
             DenyList.notifyPropertyChanged(BR.title)
             DenyList.notifyPropertyChanged(BR.description)
-            SuList.notifyPropertyChanged(BR.description)
-            SuList.refresh()
             DenyListConfig.refresh()
         }
     val mismatch get() = value != Info.isZygiskEnabled
@@ -312,8 +310,7 @@ object CoreOnly : BaseSettingsItem.Toggle() {
 object SuList : BaseSettingsItem.Toggle() {
     override val title = R.string.settings_sulist_title.asText()
     override val description get() =
-        if (Config.zygisk) R.string.settings_sulist_error_zygisk.asText()
-        else if (!Config.denyList) R.string.settings_sulist_error_magiskhide.asText()
+        if (!Config.denyList) R.string.settings_sulist_error_magiskhide.asText()
         else if (mismatch) R.string.reboot_apply_change.asText()
         else R.string.settings_sulist_summary.asText()
 
@@ -334,7 +331,7 @@ object SuList : BaseSettingsItem.Toggle() {
         }
 
     override fun refresh() {
-        isEnabled = !Config.zygisk && Config.denyList
+        isEnabled = Config.denyList
     }
 	val mismatch get() = value != Info.sulist
 }

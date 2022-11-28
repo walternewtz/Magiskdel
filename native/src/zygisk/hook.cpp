@@ -27,6 +27,8 @@ using xstring = jni_hook::string;
 
 static bool unhook_functions();
 
+static bool zygote_unmount = false;
+
 namespace {
 
 enum {
@@ -37,6 +39,7 @@ enum {
     DO_REVERT_UNMOUNT,
     CAN_UNLOAD_ZYGISK,
     SKIP_FD_SANITIZATION,
+    DO_SUMOUNT,
 
     FLAG_MAX
 };
@@ -164,8 +167,14 @@ DCL_HOOK_FUNC(int, fork) {
 DCL_HOOK_FUNC(int, unshare, int flags) {
     int res = old_unshare(flags);
     if (g_ctx && (flags & CLONE_NEWNS) != 0 && res == 0) {
-        if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
-            LOGD("zygisk: clean up mount namespace (%s)\n", g_ctx->process);
+        if (g_ctx->flags[DO_SUMOUNT]) {
+            char buf[1024];
+            if (getcurrent(buf,sizeof(buf))==0 && set_magiskcon()){
+                root_mount();
+                setcurrent(buf, sizeof(buf));
+            }
+        } if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
+            // FORCE DENYLIST UNMOUNT API
             revert_unmount();
         }
         // Restore errno back to 0
@@ -637,13 +646,14 @@ void HookContext::app_specialize_pre() {
     vector<int> module_fds;
     int fd = remote_get_info(args.app->uid, process, &info_flags, module_fds);
     if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
-        ZLOGI("[%s] is on the hidelist\n", process);
+        bool is_sulist_enabled = (info_flags & SULIST_ENFORCING) == SULIST_ENFORCING;
+        ZLOGI("[%s] is on the %s\n", process, is_sulist_enabled? "sulist":"hidelist");
         logging_muted = true;
-        flags[DO_REVERT_UNMOUNT] = true;
+        if (is_sulist_enabled) flags[DO_SUMOUNT] = true;
+        else flags[DO_REVERT_UNMOUNT] = true;
         run_modules_pre(module_fds);
         // Ensure separated namespace, allow denylist to handle isolated process before Android 11
         if (args.app->mount_external == 0 /* MOUNT_EXTERNAL_NONE */) {
-            ZLOGI("unshare [%s] [%d]\n", process, args.app->uid);
             args.app->mount_external = 1 /* MOUNT_EXTERNAL_DEFAULT */;
         }
     } else if (fd >= 0) {
@@ -747,6 +757,7 @@ void HookContext::nativeForkSystemServer_post() {
     }
     if (pid > 0) {
         create_zygote_lock(pid);
+        remote_get_sulist();
     }
     fork_post();
 }

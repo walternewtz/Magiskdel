@@ -183,6 +183,10 @@ void sepolicy::magisk_rules() {
     allow("zygote", "fs_type", "filesystem", "unmount");
     allow("system_server", "system_server", "process", "execmem");
 
+    // Zygisk SuList rules
+    allow("zygote", "zygote", "process", "setcurrent");
+    allow("zygote", SEPOL_PROC_DOMAIN, "process", "dyntransition");
+
     // Shut llkd up
     dontaudit("llkd", SEPOL_PROC_DOMAIN, "process", "ptrace");
     dontaudit("llkd", SEPOL_CLIENT_DOMAIN, "process", "ptrace");

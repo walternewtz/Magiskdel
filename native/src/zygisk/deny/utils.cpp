@@ -783,6 +783,15 @@ static void check_zygote(){
     }
 }
 
+void unmount_zygote(){
+    crawl_procfs([](int pid) -> bool {
+        if (is_zygote(pid) && parse_ppid(pid) == 1) {
+            revert_daemon(pid, -2);;
+        }
+        return true;
+    });
+}
+
 #define APP_PROC "/system/bin/app_process"
 
 static void setup_inotify() {

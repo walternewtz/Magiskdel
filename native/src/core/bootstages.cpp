@@ -656,7 +656,7 @@ void post_fs_data(int client) {
 
         zygisk_enabled = dbs[ZYGISK_CONFIG];
         // sulist mode does not support zygisk
-        sulist_enabled = dbs[DENYLIST_CONFIG] && dbs[WHITELIST_CONFIG] && !zygisk_enabled;
+        sulist_enabled = dbs[DENYLIST_CONFIG] && dbs[WHITELIST_CONFIG];
         initialize_denylist();
 
     handle_modules:

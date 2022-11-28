@@ -162,6 +162,14 @@ int remote_get_info(int uid, const char *process, uint32_t *flags, vector<int> &
     return -1;
 }
 
+int remote_get_sulist() {
+    if (int fd = zygisk_request(ZygiskRequest::SULIST_UNMOUNT); fd >= 0) {
+        int ret = read_int(fd);
+        close(fd);
+        return ret;
+    }
+    return -1;
+}
 
 // The following code runs in magiskd
 
@@ -319,6 +327,9 @@ static void get_process_info(int client, const sock_cred *cred) {
     if (uid_granted_root(uid)) {
         flags |= PROCESS_GRANTED_ROOT;
     }
+    if (sulist_enabled) {
+        flags |= SULIST_ENFORCING;
+    }
 
     xwrite(client, &flags, sizeof(flags));
 
@@ -442,6 +453,11 @@ static void on_system_server_forked(int client, int pid) {
     new_daemon_thread(reinterpret_cast<thread_entry>(zygote_listener), reinterpret_cast<void*>(fd2));
 }
 
+static void sulist_status(int client) {
+    if (sulist_enabled) unmount_zygote();
+    write_int(client, sulist_enabled);
+}
+
 void zygisk_handler(int client, const sock_cred *cred) {
     int code = read_int(client);
     char buf[256];
@@ -467,6 +483,9 @@ void zygisk_handler(int client, const sock_cred *cred) {
         break;
     case ZygiskRequest::SYSTEM_SERVER_FORKED:
         on_system_server_forked(client, cred->pid);
+        break;
+    case ZygiskRequest::SULIST_UNMOUNT:
+        sulist_status(client);
         break;
     default:
         // Unknown code
