@@ -2,8 +2,9 @@
 #include <sys/mount.h>
 #include <dlfcn.h>
 #include <bitset>
+#include <sys/prctl.h>
 
-#include <xhook.h>
+#include <lsplt.hpp>
 
 #include <base.hpp>
 #include <flags.h>
@@ -20,7 +21,7 @@ using jni_hook::tree_map;
 using xstring = jni_hook::string;
 
 // Extreme verbose logging
-//#define ZLOGV(...) ZLOGD(__VA_ARGS__)
+// #define ZLOGV(...) ZLOGD(__VA_ARGS__)
 #define ZLOGV(...)
 
 static bool unhook_functions();
@@ -80,7 +81,7 @@ struct HookContext {
 #undef DCL_PRE_POST
 
 // Global variables
-vector<tuple<const char *, const char *, void **>> *xhook_list;
+vector<tuple<ino_t, const char *, void **>> *xhook_list;
 map<string, vector<JNINativeMethod>, StringCmp> *jni_hook_list;
 hash_map<xstring, tree_map<xstring, tree_map<xstring, void *>>> *jni_method_map;
 
@@ -168,9 +169,6 @@ DCL_HOOK_FUNC(int, unshare, int flags) {
         (g_ctx->info_flags & PROCESS_IS_SYS_UI) == 0) {
         if (g_ctx->flags[DO_REVERT_UNMOUNT]) {
             revert_unmount();
-        } else {
-            umount2("/system/bin/app_process64", MNT_DETACH);
-            umount2("/system/bin/app_process32", MNT_DETACH);
         }
         // Restore errno back to 0
         errno = 0;
@@ -235,15 +233,8 @@ void vtable_entry(void *self, JNIEnv* env) {
     reinterpret_cast<decltype(&onVmCreated)>(gAppRuntimeVTable[N])(self, env);
 }
 
-// This method is a trampoline for swizzling android::AppRuntime vtable
-bool swizzled = false;
-DCL_HOOK_FUNC(void, setArgv0, void *self, const char *argv0, bool setProcName) {
-    if (swizzled) {
-        old_setArgv0(self, argv0, setProcName);
-        return;
-    }
-
-    ZLOGD("AndroidRuntime::setArgv0\n");
+void hookVirtualTable(void *self) {
+    ZLOGD("hook AndroidRuntime virtual table\n");
 
     // We don't know which entry is onVmCreated, so overwrite every one
     // We also don't know the size of the vtable, but 8 is more than enough
@@ -260,9 +251,6 @@ DCL_HOOK_FUNC(void, setArgv0, void *self, const char *argv0, bool setProcName) {
     // Swizzle C++ vtable to hook virtual function
     gAppRuntimeVTable = *reinterpret_cast<void***>(self);
     *reinterpret_cast<void***>(self) = new_table;
-    swizzled = true;
-
-    old_setArgv0(self, argv0, setProcName);
 }
 
 #undef DCL_HOOK_FUNC
@@ -311,53 +299,119 @@ ZygiskModule::ZygiskModule(int id, void *handle, void *entry)
     api.base.registerModule = &ZygiskModule::RegisterModuleImpl;
 }
 
-bool ZygiskModule::RegisterModuleImpl(api_abi_base *api, long *module) {
+bool ZygiskModule::RegisterModuleImpl(ApiTable *api, long *module) {
+    if (api == nullptr || module == nullptr)
+        return false;
+
     long api_version = *module;
     // Unsupported version
     if (api_version > ZYGISK_API_VERSION)
         return false;
 
     // Set the actual module_abi*
-    api->impl->mod = { module };
+    api->base.impl->mod = { module };
 
     // Fill in API accordingly with module API version
     switch (api_version) {
-    case 4: {
-        auto v4 = static_cast<api_abi_v4 *>(api);
-        v4->exemptFd = [](int fd) { return g_ctx != nullptr && g_ctx->exempt_fd(fd); };
-    }
-        // fallthrough
-    case 3:
-    case 2: {
-        auto v2 = static_cast<api_abi_v2 *>(api);
-        v2->getModuleDir = [](ZygiskModule *m) { return m->getModuleDir(); };
-        v2->getFlags = [](auto) { return ZygiskModule::getFlags(); };
-    }
-        // fallthrough
-    case 1: {
-        auto v1 = static_cast<api_abi_v1 *>(api);
-        v1->hookJniNativeMethods = &hookJniNativeMethods;
-        v1->pltHookRegister = [](const char *p, const char *s, void *n, void **o) {
-            xhook_register(p, s, n, o);
-        };
-        v1->pltHookExclude = [](const char *p, const char *s) {
-            xhook_ignore(p, s);
-        };
-        v1->pltHookCommit = [] {
-            bool r = xhook_refresh(0) == 0;
-            xhook_clear();
-            return r;
-        };
-        v1->connectCompanion = [](ZygiskModule *m) { return m->connectCompanion(); };
-        v1->setOption = [](ZygiskModule *m, auto opt) { m->setOption(opt); };
-        break;
-    }
-    default:
-        // Unknown version number
-        return false;
+        case 4:
+            api->v4.exemptFd = [](int fd) { return g_ctx != nullptr && g_ctx->exempt_fd(fd); };
+            api->v4.pltHookRegisterInode = PltHookRegister;
+            api->v4.pltHookExcludeInode = PltHookExclude;
+            [[fallthrough]];
+        case 3:
+        case 2:
+            api->v2.getModuleDir = [](ZygiskModule *m) { return m->getModuleDir(); };
+            api->v2.getFlags = [](auto) { return ZygiskModule::getFlags(); };
+            [[fallthrough]];
+        case 1:
+            api->v1.hookJniNativeMethods = hookJniNativeMethods;
+            api->v1.pltHookRegister = PltHookRegister;
+            api->v1.pltHookExclude = PltHookExclude;
+            api->v1.pltHookCommit = CommitPltHook;
+            api->v1.connectCompanion = [](ZygiskModule *m) { return m->connectCompanion(); };
+            api->v1.setOption = [](ZygiskModule *m, auto opt) { m->setOption(opt); };
+            break;
+        default:
+            // Unknown version number
+            return false;
     }
 
     return true;
+}
+
+void ZygiskModule::PltHookRegister(const char* regex, const char *symbol, void *callback, void **backup) {
+    if (regex == nullptr || symbol == nullptr || callback == nullptr)
+        return;
+    regex_t re;
+    if (regcomp(&re, regex, REG_NOSUB) != 0)
+        return;
+    mutex_guard lock(hook_lock);
+    register_info.emplace_back(RegisterInfo{re, 0, symbol, callback, backup});
+}
+
+void ZygiskModule::PltHookRegister(ino_t inode, const char *symbol, void *callback, void **backup) {
+    if (inode == 0 || symbol == nullptr || callback == nullptr)
+        return;
+    mutex_guard lock(hook_lock);
+    register_info.emplace_back(RegisterInfo{{}, inode, symbol, callback, backup});
+}
+
+void ZygiskModule::PltHookExclude(const char* regex, const char *symbol) {
+    if (!regex) return;
+    regex_t re;
+    if (regcomp(&re, regex, REG_NOSUB) != 0)
+        return;
+    mutex_guard lock(hook_lock);
+    ignore_info.emplace_back(IgnoreInfo{re, 0, symbol ? symbol : ""});
+}
+
+void ZygiskModule::PltHookExclude(ino_t inode, const char *symbol) {
+    if (inode == 0) return;
+    mutex_guard lock(hook_lock);
+    ignore_info.emplace_back(IgnoreInfo{{}, inode, symbol ? symbol : ""});
+}
+
+bool ZygiskModule::CommitPltHook() {
+    mutex_guard lock(hook_lock);
+    for (auto &map: lsplt::MapInfo::Scan()) {
+        if (map.offset != 0) continue;
+        for (auto &reg: register_info) {
+            if ((reg.inode != 0 && reg.inode != map.inode)||
+                (reg.inode == 0 && regexec(&reg.regex, map.path.c_str(), 0, nullptr, 0) != 0))
+                continue;
+            bool ignored = false;
+            for (auto &ign: ignore_info) {
+                if ((ign.inode != 0 && ign.inode != map.inode) ||
+                    (ign.inode == 0 && regexec(&ign.regex, map.path.c_str(), 0, nullptr, 0) != 0))
+                    continue;
+                if (ign.symbol.empty() || ign.symbol == reg.symbol) {
+                    ignored = true;
+                    break;
+                }
+            }
+            if (!ignored) {
+                lsplt::RegisterHook(map.inode, reg.symbol, reg.callback, reg.backup);
+            }
+        }
+    }
+    register_info.clear();
+    ignore_info.clear();
+    return lsplt::CommitHook();
+}
+
+bool ZygiskModule::valid() const {
+    if (mod.api_version == nullptr)
+        return false;
+    switch (*mod.api_version) {
+        case 4:
+        case 3:
+        case 2:
+        case 1:
+            return mod.v1->impl && mod.v1->preAppSpecialize && mod.v1->postAppSpecialize &&
+                   mod.v1->preServerSpecialize && mod.v1->postServerSpecialize;
+        default:
+            return false;
+    }
 }
 
 int ZygiskModule::connectCompanion() const {
@@ -402,6 +456,43 @@ int sigmask(int how, int signum) {
     sigemptyset(&set);
     sigaddset(&set, signum);
     return sigprocmask(how, &set, nullptr);
+}
+
+void create_zygote_lock(int pid) {
+    int holder_pid = old_fork();
+    if (holder_pid < 0) {
+        ZLOGE("failed to create holder: %s", strerror(errno));
+    }
+    if (holder_pid != 0) return;
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
+    if (getppid() == 1) exit(1);
+    int fd = zygisk_request(ZygiskRequest::SYSTEM_SERVER_FORKED);
+    do {
+        if (fd < 0) break;
+        write_int(fd, pid);
+        int lock_fd = recv_fd(fd);
+        if (lock_fd < 0) break;
+        ZLOGD("received lock fd in zygote:%d", lock_fd);
+        struct flock lock{
+                .l_type = F_RDLCK,
+                .l_whence = SEEK_SET,
+                .l_start = 0,
+                .l_len = 0
+        };
+        if (fcntl(lock_fd, F_SETLK, &lock) < 0) {
+            ZLOGE("failed to set lock in zygote: %s", strerror(errno));
+            write_int(fd, 1);
+            break;
+        }
+        write_int(fd, 0);
+        close(logd_fd.exchange(-1));
+        close(fd);
+        setprogname("lockholder");
+        while (true) {
+            pause();
+        }
+    } while (false);
+    close(fd);
 }
 
 void HookContext::fork_pre() {
@@ -544,6 +635,7 @@ void HookContext::app_specialize_pre() {
     int fd = remote_get_info(args.app->uid, process, &info_flags, module_fds);
     if ((info_flags & UNMOUNT_MASK) == UNMOUNT_MASK) {
         ZLOGI("[%s] is on the denylist\n", process);
+        logging_muted = true;
         flags[DO_REVERT_UNMOUNT] = true;
     } else if (fd >= 0) {
         run_modules_pre(module_fds);
@@ -644,6 +736,9 @@ void HookContext::nativeForkSystemServer_post() {
         ZLOGV("post forkSystemServer\n");
         run_modules_post();
     }
+    if (pid > 0) {
+        create_zygote_lock(pid);
+    }
     fork_post();
 }
 
@@ -677,8 +772,7 @@ void HookContext::nativeForkAndSpecialize_post() {
 } // namespace
 
 static bool hook_refresh() {
-    if (xhook_refresh(0) == 0) {
-        xhook_clear();
+    if (lsplt::CommitHook()) {
         return true;
     } else {
         ZLOGE("xhook failed\n");
@@ -686,14 +780,12 @@ static bool hook_refresh() {
     }
 }
 
-static int hook_register(const char *path, const char *symbol, void *new_func, void **old_func) {
-    int ret = xhook_register(path, symbol, new_func, old_func);
-    if (ret != 0) {
+static void hook_register(ino_t inode, const char *symbol, void *new_func, void **old_func) {
+    if (!lsplt::RegisterHook(inode, symbol, new_func, old_func)) {
         ZLOGE("Failed to register hook \"%s\"\n", symbol);
-        return ret;
+        return;
     }
-    xhook_list->emplace_back(path, symbol, old_func);
-    return 0;
+    xhook_list->emplace_back(inode, symbol, old_func);
 }
 
 #define XHOOK_REGISTER_SYM(PATH_REGEX, SYM, NAME) \
@@ -703,22 +795,27 @@ static int hook_register(const char *path, const char *symbol, void *new_func, v
     XHOOK_REGISTER_SYM(PATH_REGEX, #NAME, NAME)
 
 #define ANDROID_RUNTIME ".*/libandroid_runtime.so$"
-#define APP_PROCESS     "^/system/bin/app_process.*"
+
+#include "elf_util.h"
 
 void hook_functions() {
-#if MAGISK_DEBUG
-    // xhook_enable_debug(1);
-    xhook_enable_sigsegv_protection(0);
-#endif
     default_new(xhook_list);
     default_new(jni_hook_list);
     default_new(jni_method_map);
 
-    XHOOK_REGISTER(ANDROID_RUNTIME, fork);
-    XHOOK_REGISTER(ANDROID_RUNTIME, unshare);
-    XHOOK_REGISTER(ANDROID_RUNTIME, jniRegisterNativeMethods);
-    XHOOK_REGISTER(ANDROID_RUNTIME, selinux_android_setcontext);
-    XHOOK_REGISTER_SYM(ANDROID_RUNTIME, "__android_log_close", android_log_close);
+    ino_t android_runtime_inode = 0;
+    for (auto &map : lsplt::MapInfo::Scan()) {
+        if (map.path.ends_with("libandroid_runtime.so")) {
+            android_runtime_inode = map.inode;
+            break;
+        }
+    }
+
+    XHOOK_REGISTER(android_runtime_inode, fork);
+    XHOOK_REGISTER(android_runtime_inode, unshare);
+    XHOOK_REGISTER(android_runtime_inode, jniRegisterNativeMethods);
+    XHOOK_REGISTER(android_runtime_inode, selinux_android_setcontext);
+    XHOOK_REGISTER_SYM(android_runtime_inode, "__android_log_close", android_log_close);
     hook_refresh();
 
     // Remove unhooked methods
@@ -728,11 +825,19 @@ void hook_functions() {
             xhook_list->end());
 
     if (old_jniRegisterNativeMethods == nullptr) {
-        ZLOGD("jniRegisterNativeMethods not hooked, using fallback\n");
+        do {
+            ZLOGD("jniRegisterNativeMethods not hooked, using fallback\n");
 
-        // android::AndroidRuntime::setArgv0(const char*, bool)
-        XHOOK_REGISTER_SYM(APP_PROCESS, "_ZN7android14AndroidRuntime8setArgv0EPKcb", setArgv0);
-        hook_refresh();
+            SandHook::ElfImg art("libandroid_runtime.so");
+
+            auto *GetRuntime = art.getSymbAddress<void*(*)()>("_ZN7android14AndroidRuntime10getRuntimeEv");
+
+            if (GetRuntime == nullptr) {
+                ZLOGE("GetRuntime is nullptr");
+                break;
+            }
+            hookVirtualTable(GetRuntime());
+        } while (false);
 
         // We still need old_jniRegisterNativeMethods as other code uses it
         // android::AndroidRuntime::registerNativeMethods(_JNIEnv*, const char*, const JNINativeMethod*, int)
@@ -765,8 +870,8 @@ static bool unhook_functions() {
     delete jni_hook_list;
 
     // Unhook xhook
-    for (const auto &[path, sym, old_func] : *xhook_list) {
-        if (xhook_register(path, sym, *old_func, nullptr) != 0) {
+    for (const auto &[inode, sym, old_func] : *xhook_list) {
+        if (!lsplt::RegisterHook(inode, sym, *old_func, nullptr)) {
             ZLOGE("Failed to register xhook [%s]\n", sym);
             success = false;
         }

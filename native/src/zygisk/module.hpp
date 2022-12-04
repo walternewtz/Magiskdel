@@ -1,6 +1,8 @@
 #pragma once
 
 #include "api.hpp"
+#include <list>
+#include <regex.h>
 
 namespace {
 
@@ -21,6 +23,8 @@ struct api_abi_v1;
 struct api_abi_v2;
 using  api_abi_v3 = api_abi_v2;
 struct api_abi_v4;
+
+union ApiTable;
 
 struct AppSpecializeArgs_v3 {
     jint &uid;
@@ -118,7 +122,7 @@ enum : uint32_t {
 
 struct api_abi_base {
     ZygiskModule *impl;
-    bool (*registerModule)(api_abi_base *, long *);
+    bool (*registerModule)(ApiTable *, long *);
 };
 
 struct api_abi_v1 : public api_abi_base {
@@ -138,6 +142,15 @@ struct api_abi_v2 : public api_abi_v1 {
 
 struct api_abi_v4 : public api_abi_v2 {
     bool (*exemptFd)(int);
+    void (*pltHookRegisterInode)(ino_t, const char *, void *, void **);
+    void (*pltHookExcludeInode)(ino_t, const char *);
+};
+
+union ApiTable {
+    api_abi_base base;
+    api_abi_v1 v1;
+    api_abi_v2 v2;
+    api_abi_v4 v4;
 };
 
 #define call_app(method)               \
@@ -172,6 +185,7 @@ struct ZygiskModule {
         mod.v1->postServerSpecialize(mod.v1->impl, args);
     }
 
+    bool valid() const;
     int connectCompanion() const;
     int getModuleDir() const;
     void setOption(zygisk::Option opt);
@@ -182,7 +196,7 @@ struct ZygiskModule {
 
     ZygiskModule(int id, void *handle, void *entry);
 
-    static bool RegisterModuleImpl(api_abi_base *api, long *module);
+    static bool RegisterModuleImpl(ApiTable *api, long *module);
 
 private:
     const int id;
@@ -204,6 +218,29 @@ private:
         long *api_version;
         module_abi_v1 *v1;
     } mod;
+
+    struct RegisterInfo {
+        regex_t regex;
+        ino_t inode;
+        std::string symbol;
+        void *callback;
+        void **backup;
+    };
+
+    struct IgnoreInfo {
+        regex_t regex;
+        ino_t inode;
+        std::string symbol;
+    };
+    inline static pthread_mutex_t hook_lock = PTHREAD_MUTEX_INITIALIZER;
+    inline static std::list<RegisterInfo> register_info {};
+    inline static std::list<IgnoreInfo> ignore_info {};
+
+    static void PltHookRegister(const char *lib, const char *symbol, void *callback, void **backup);
+    static void PltHookRegister(ino_t inode, const char *symbol, void *callback, void **backup);
+    static void PltHookExclude(const char *lib, const char *symbol);
+    static void PltHookExclude(ino_t inode, const char *symbol);
+    static bool CommitPltHook();
 };
 
 } // namespace

@@ -75,36 +75,6 @@ std::pair<void *, size_t> find_map_range(const char *name, unsigned long inode) 
     return make_pair(reinterpret_cast<void *>(start), end - start);
 }
 
-void unmap_all(const char *name) {
-    vector<map_info> maps = find_maps(name);
-    for (map_info &info : maps) {
-        void *addr = reinterpret_cast<void *>(info.start);
-        size_t size = info.end - info.start;
-        if (info.perms & PROT_READ) {
-            // Make sure readable pages are still readable
-            void *dummy = xmmap(nullptr, size, PROT_READ, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-            mremap(dummy, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, addr);
-        } else {
-            munmap(addr, size);
-        }
-    }
-}
-
-void remap_all(const char *name) {
-    vector<map_info> maps = find_maps(name);
-    for (map_info &info : maps) {
-        void *addr = reinterpret_cast<void *>(info.start);
-        size_t size = info.end - info.start;
-        void *copy = xmmap(nullptr, size, PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        if ((info.perms & PROT_READ) == 0) {
-            mprotect(addr, size, PROT_READ);
-        }
-        memcpy(copy, addr, size);
-        mremap(copy, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, addr);
-        mprotect(addr, size, info.perms);
-    }
-}
-
 uintptr_t get_function_off(int pid, uintptr_t addr, char *lib) {
     uintptr_t off = 0;
     parse_maps(pid, [=, &off](const map_info &info, const char *path) -> bool {
