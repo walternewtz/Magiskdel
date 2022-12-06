@@ -11,6 +11,7 @@
 #define ZYGISK_LIB "libzygisk.so"
 
 extern std::string orig_native_bridge;
+extern std::string nb_replace_lib;
 
 namespace ZygiskRequest {
 enum : int {

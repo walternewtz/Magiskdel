@@ -586,6 +586,9 @@ static void inject_magisk_bins(root_node *system) {
 #include <wait.h>
 
 std::string orig_native_bridge = "0";
+std::string nb_replace_lib = "";
+std::string nb_replace_bak = "";
+static bool nb_replace = false;
 
 static int extract_bin(const char *prog, const char *dst) {
     int pid = xfork();
@@ -612,21 +615,25 @@ public:
         bool is_64bit = dir_name == "/system/lib64";
         src += is_64bit ? ".64" : ".32";
         string mbin = MAGISKTMP + "/magisk" + (is_64bit ? "64" : "32");
-        if (name() == LOADER_LIB) {
+        if (name() == LOADER_LIB || name() == nb_replace_lib) {
             int r = extract_bin(mbin.data(), src.data());
             if (r) {
                 LOGE("failed to extract zygisk-ld (%d)\n", r);
                 return;
             }
+            if (chmod(src.data(), 0644) < 0) PLOGE("chmod");
+            if (setfilecon(src.data(), "u:object_r:system_file:s0") < 0) PLOGE("setfilecon");
         } else if (name() == ZYGISK_LIB) {
             int f = xopen(mbin.data(), O_RDONLY | O_CLOEXEC);
             int out = xopen(src.data(), O_CREAT | O_WRONLY | O_CLOEXEC, 0);
             xsendfile(out, f, nullptr, INT_MAX);
             close(f);
             close(out);
+            if (chmod(src.data(), 0644) < 0) PLOGE("chmod");
+            if (setfilecon(src.data(), "u:object_r:system_file:s0") < 0) PLOGE("setfilecon");
+        } else if (name() == nb_replace_bak) {
+            src = MAGISKTMP + "/" MIRRDIR + dir_name + "/" + nb_replace_lib;
         }
-        if (chmod(src.data(), 0644) < 0) PLOGE("chmod");
-        if (setfilecon(src.data(), "u:object_r:system_file:s0") < 0) PLOGE("setfilecon");
         create_and_mount(src);
     }
 };
@@ -641,11 +648,24 @@ static void inject_zygisk_libs(root_node *system) {
             lib = new inter_node(lib_path, ""); \
             system->insert(lib); \
         } \
-        lib->insert(new zygisk_node(LOADER_LIB)); \
+        if (nb_replace) { \
+            lib->insert(new zygisk_node(nb_replace_lib.data())); \
+            lib->insert(new zygisk_node(nb_replace_bak.data())); \
+        } else { \
+            lib->insert(new zygisk_node(LOADER_LIB)); \
+        } \
         lib->insert(new zygisk_node(ZYGISK_LIB)); \
     }
     INJECT(64, "lib64")
     INJECT(32, "lib")
+}
+
+static void prepare_replace_nb(){
+    LOGD("zygisk: replace native bridge [%s]\n", nb_replace_lib.data());
+    nb_replace = true;
+    nb_replace_bak = nb_replace_lib + ".bak"s;
+    setprop(NATIVE_BRIDGE_PROP, nb_replace_bak.data(), false);
+    orig_native_bridge = nb_replace_bak;
 }
 
 void magic_mount() {
@@ -704,6 +724,18 @@ void magic_mount() {
     // Mount on top of modules to enable zygisk
     if (zygisk_enabled) {
         orig_native_bridge = getprop(NATIVE_BRIDGE_PROP);
+
+        // FOR DEBUG
+        nb_replace_lib = getprop("persist.zygisk.native.bridge");
+        if (!nb_replace_lib.empty() && nb_replace_lib != "0"){
+            prepare_replace_nb();
+            delprop("persist.zygisk.native.bridge", false);
+        } else if (access("/system/lib/libnb.so", F_OK) == 0 || access("/system/lib64/libnb.so", F_OK) == 0) {
+            // REPLACE /system/lib/libnb.so, BACKUP /system/lib/libnb.so.bak
+            nb_replace_lib = "libnb.so";
+            prepare_replace_nb();
+        }
+
         string zygisk_bin = MAGISKTMP + "/" ZYGISKBIN;
         mkdir(zygisk_bin.data(), 0);
         inject_zygisk_libs(system);
@@ -728,8 +760,13 @@ void magic_mount() {
         root->mount();
     }
 
-    if (zygisk_enabled) 
-        setprop(NATIVE_BRIDGE_PROP, LOADER_LIB, false);
+    if (zygisk_enabled) {
+        if (!nb_replace_lib.empty() && nb_replace_lib != "0"){
+            setprop(NATIVE_BRIDGE_PROP, nb_replace_lib.data(), false);
+        } else {
+            setprop(NATIVE_BRIDGE_PROP, LOADER_LIB, false);
+        }
+    }
 
     log_enabled = false;
 }

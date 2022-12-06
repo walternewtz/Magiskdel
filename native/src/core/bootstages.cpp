@@ -636,12 +636,14 @@ void post_fs_data(int client) {
 
     if (getprop("persist.sys.safemode", true) == "1" || check_key_combo()) {
         safe_mode = true;
+        delprop("persist.zygisk.native.bridge", true);
         // Disable all modules and denylist so next boot will be clean
         disable_modules();
         disable_deny();
     } else {
         if(core_only(false)){
             LOGI("** Core-only mode, skip loading modules\n");
+            delprop("persist.zygisk.native.bridge", true);
         } else {
             exec_common_scripts("post-fs-data");
         }
