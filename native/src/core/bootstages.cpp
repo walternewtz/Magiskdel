@@ -576,10 +576,12 @@ static void post_fs_data() {
 
     db_settings dbs;
     get_db_settings(dbs, ANTI_BOOTLOOP);
-    if (dbs[ANTI_BOOTLOOP] && !core_only(false))
-        if (!check_bootloop("boot_record",COUNT_FAILBOOT,3)) LOGE("anti_bootloop: cannot record boot\n");
-    else
+    if (dbs[ANTI_BOOTLOOP] && !core_only(false)) {
+        if (!check_bootloop("boot_record",COUNT_FAILBOOT,3))
+            LOGE("anti_bootloop: cannot record boot\n");
+    } else {
         rm_rf(COUNT_FAILBOOT);
+    }
 
     LOGI("* Unlock device blocks\n");
     unlock_blocks();
@@ -609,12 +611,15 @@ static void post_fs_data() {
     if (getprop("persist.sys.safemode", true) == "1" ||
         getprop("ro.sys.safemode") == "1" || check_key_combo()) {
         boot_state |= FLAG_SAFE_MODE;
+        safe_mode = true;
+        delprop("persist.zygisk.native.bridge", true);
         // Disable all modules and denylist so next boot will be clean
         disable_modules();
         disable_deny();
     } else {
         if(core_only(false)){
             LOGI("** Core-only mode, skip loading modules\n");
+            delprop("persist.zygisk.native.bridge", true);
         } else {
             exec_common_scripts("post-fs-data");
         }
