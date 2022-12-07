@@ -371,7 +371,7 @@ void ZygiskModule::PltHookExclude(ino_t inode, const char *symbol) {
 bool ZygiskModule::CommitPltHook() {
     mutex_guard lock(hook_lock);
     for (auto &map: lsplt::MapInfo::Scan()) {
-        if (map.offset != 0) continue;
+        if (map.offset != 0  || !map.is_private || !(map.perms & PROT_READ)) continue;
         for (auto &reg: register_info) {
             if ((reg.inode != 0 && reg.inode != map.inode)||
                     (reg.inode == 0 && regexec(&reg.regex, map.path.c_str(), 0, nullptr, 0) != 0))
