@@ -595,7 +595,9 @@ void hide_sensitive_props() {
     LOGI("hide: Reset sensitive props\n");
 
     for (int i = 0; prop_key[i]; ++i) {
-        setprop(prop_key[i], prop_val[i], false);
+        auto value = getprop(prop_key[i]);
+        if (!value.empty())
+            setprop(prop_key[i], prop_val[i], false);
     }
 
     for (int i = 0; prop_suffix[i]; ++i)
