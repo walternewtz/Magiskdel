@@ -20,10 +20,11 @@
 
 #include "core.hpp"
 
-#define TRIGGER_BL "/dev/.magisk_ztrigger"
 #define COUNT_FAILBOOT "/cache/.magisk_checkboot"
 
 #define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
+
+using namespace std;
 
 #define FIX_MIRRORS 1
 
@@ -35,7 +36,7 @@ void mount_mirrors(bool setup_sulist = false);
 
 bool is_rootfs()
 {
-    const char *path="/";
+    const char *path= "/";
     struct statfs s;
     statfs(path, &s);
     
@@ -49,9 +50,80 @@ bool is_rootfs()
     }
 }
 
-bool check_bootloop(const char *name, const char *filename, int max);
+int ztrigger_count = 0;
+static bool bootloop_protect = false;
 
-using namespace std;
+
+static const char *preinit_part[]={
+        PREINIT_PARTS,
+        "/mnt/vendor/persist",
+        nullptr
+    };
+
+
+static bool is_persist_access(const char *file){
+    for (int i=0;preinit_part[i];i++) {
+        string sfile = string(preinit_part[i]) + "/" + file;
+        if (access(sfile.data(), F_OK) == 0) {
+            LOGD("daemon: found trigger file [%s]\n", sfile.data());
+            return true;
+        }
+    }
+    return false;
+}
+
+static void create_persist_file(const char *file){
+    for (int i=0;preinit_part[i];i++) {
+        string sfile = string(preinit_part[i]) + "/" + file;
+        LOGD("daemon: create trigger file [%s]\n", sfile.data());
+        close(xopen(sfile.data(), O_RDONLY | O_CREAT, 0));
+    }
+}
+
+static void remove_persist_access(const char *file){
+    for (int i=0;preinit_part[i];i++) {
+        string sfile = string(preinit_part[i]) + "/" + file;
+        if (access(sfile.data(), F_OK) == 0) {
+            LOGD("daemon: remove trigger file [%s]\n", sfile.data());
+            rm_rf(sfile.data());
+        }
+    }
+}
+
+void reboot_coreonly(){
+    create_persist_file(".disable_all");
+    LOGI("** Reboot to recovery");
+    exec_command_sync("/system/bin/reboot", "recovery");
+}
+
+bool check_bootloop(const char *name, const char *filename, int max)
+{
+    int n=1;
+    if (access(filename, F_OK) != 0) {
+        // not exist, we need create file with initial value
+        FILE *ztrigger=fopen(filename, "wb");
+        if (ztrigger == NULL) return false; // failed
+        fwrite(&n,1,sizeof(int),ztrigger);
+        fclose(ztrigger);
+    }
+    FILE *ztrigger=fopen(filename, "rb");
+    if (ztrigger == NULL) return false; // failed
+    fread(&n, 1, sizeof(int), ztrigger);
+    fclose(ztrigger);
+    // current number here
+        if (n >= max) {
+            LOGI("anti_bootloop: %s reachs %d times, restart!\n", name, max);
+            reboot_coreonly();
+        } else LOGI("%s count = %d\n", name, n);
+    
+    ztrigger=fopen(filename, "wb");
+    if (ztrigger == NULL) return false; // failed
+    n++; // increase the number
+    fwrite(&n, 1, sizeof(int), ztrigger);
+    fclose(ztrigger);
+    return true;
+}
+
 
 // Boot stage state
 enum : int {
@@ -65,7 +137,6 @@ enum : int {
 static int boot_state = FLAG_NONE;
 
 bool zygisk_enabled = false;
-static bool safe_mode = false;
 bool sulist_enabled = false;
 
 static const char *F2FS_SYSFS_PATH = nullptr;
@@ -111,7 +182,7 @@ void recreate_sbin_v2(const char *mirror, bool use_bind_mount) {
 string rootmnt_dir;
 
 bool mount_correct(const std::string_view dev, const std::string_view dir,
-	const std::string_view root, const std::string_view type, int flags = 0)
+    const std::string_view root, const std::string_view type, int flags = 0)
 {
     char *ranc = random_strc(20);
     string root_mnt = rootmnt_dir + "/" + ranc;
@@ -325,8 +396,8 @@ static bool magisk_env() {
                 continue;
             }
             rm_rf(DATABIN);
-           	cp_afc(alt, DATABIN);
-           	rm_rf(alt);
+            cp_afc(alt, DATABIN);
+            rm_rf(alt);
             break;
         }
     }
@@ -365,19 +436,9 @@ void reboot() {
 }
 
 static bool core_only(bool rm_trigger = false){
-    if (access("/data/adb/.disable_magisk", F_OK) == 0 \
-		|| access("/cache/.disable_magisk", F_OK) == 0 \
-		|| access("/persist/.disable_magisk", F_OK) == 0 \
-		|| access("/data/unencrypted/.disable_magisk", F_OK) == 0 \
-		|| access("/metadata/.disable_magisk", F_OK) == 0 \
-		|| access("/mnt/vendor/persist/.disable_magisk", F_OK) == 0){
+    if (is_persist_access(".disable_magisk")){
         if (rm_trigger){
-            rm_rf("/cache/.disable_magisk");
-            rm_rf("/metadata/.disable_magisk");
-            rm_rf("/persist/.disable_magisk");
-            rm_rf("/data/unencrypted/.disable_magisk");
-            rm_rf("/mnt/vendor/persist/.disable_magisk");
-            rm_rf("/data/adb/.disable_magisk");
+            remove_persist_access(".disable_magisk");
         }
         return true;
     }
@@ -386,18 +447,9 @@ static bool core_only(bool rm_trigger = false){
 
 
 static bool should_skip_all(){
-    if (access("/data/adb/.disable_all", F_OK) == 0 \
-		|| access("/cache/.disable_all", F_OK) == 0 \
-		|| access("/persist/.disable_all", F_OK) == 0 \
-		|| access("/data/unencrypted/.disable_all", F_OK) == 0 \
-		|| access("/metadata/.disable_all", F_OK) == 0 \
-		|| access("/mnt/vendor/persist/.disable_all", F_OK) == 0){
-        rm_rf("/cache/.disable_all");
-        rm_rf("/metadata/.disable_all");
-        rm_rf("/persist/.disable_all");
-        rm_rf("/data/unencrypted/.disable_all");
-        rm_rf("/mnt/vendor/persist/.disable_all");
-        rm_rf("/data/adb/.disable_all");
+    if (is_persist_access(".disable_all")){
+        remove_persist_access(".disable_all");
+        rm_rf(COUNT_FAILBOOT);
         return true;
     }
     return false;
@@ -445,7 +497,7 @@ static void simple_mount(const string &sdir, const string &ddir = "") {
         string src = sdir + "/" + entry->d_name;
         string dest = ddir + "/" + entry->d_name;
         if (access(dest.data(), F_OK) == 0 && !system_lnk(dest.data())) {
-        	if (entry->d_type == DT_LNK) continue;
+            if (entry->d_type == DT_LNK) continue;
             else if (entry->d_type == DT_DIR) {
                 // Recursive
                 simple_mount(src, dest);
@@ -603,8 +655,8 @@ static void __tune_f2fs(const char *dir, const char *device, const char *node,
 }
 
 static void tune_f2fs() {
-	// Check f2fs sys path
-	if (access("/sys/fs/f2fs", F_OK) == 0)
+    // Check f2fs sys path
+    if (access("/sys/fs/f2fs", F_OK) == 0)
         F2FS_SYSFS_PATH = "/sys/fs/f2fs";
     else if (access("/sys/fs/f2fs_dev", F_OK) == 0)
         F2FS_SYSFS_PATH = "/sys/fs/f2fs_dev";
@@ -612,7 +664,7 @@ static void tune_f2fs() {
         LOGD("tune_f2fs: /sys/fs/f2fs is not found, skip tuning!\n");
         return;
     }
-	LOGI("tune_f2fs: %s\n", F2FS_SYSFS_PATH);
+    LOGI("tune_f2fs: %s\n", F2FS_SYSFS_PATH);
     // Tune f2fs sysfs node
     if (auto dir = xopen_dir(F2FS_SYSFS_PATH); dir) {
         for (dirent *entry; (entry = readdir(dir.get()));) {
@@ -658,12 +710,8 @@ static void post_fs_data() {
 
     db_settings dbs;
     get_db_settings(dbs, ANTI_BOOTLOOP);
-    if (dbs[ANTI_BOOTLOOP] && !core_only(false)) {
-        if (!check_bootloop("boot_record",COUNT_FAILBOOT,3))
-            LOGE("anti_bootloop: cannot record boot\n");
-    } else {
-        rm_rf(COUNT_FAILBOOT);
-    }
+    bool coreonly_mode = core_only(false);
+    bootloop_protect = dbs[ANTI_BOOTLOOP];
 
     LOGI("* Unlock device blocks\n");
     unlock_blocks();
@@ -692,37 +740,44 @@ static void post_fs_data() {
     }
 
     if (getprop("persist.sys.safemode", true) == "1" ||
-        getprop("ro.sys.safemode") == "1" || check_key_combo()) {
+        getprop("ro.sys.safemode") == "1" || check_key_combo() || should_skip_all()) {
         boot_state |= FLAG_SAFE_MODE;
-        safe_mode = true;
+        LOGI("** Safe mode triggered\n");
         delprop("persist.zygisk.native.bridge", true);
         // Disable all modules and denylist so next boot will be clean
         disable_modules();
         disable_deny();
+        prepare_modules();
     } else {
-        if(core_only(false)){
-            LOGI("** Core-only mode, skip loading modules\n");
-            delprop("persist.zygisk.native.bridge", true);
-        } else {
-            exec_common_scripts("post-fs-data");
-        }
-        if (should_skip_all()) {
-            disable_modules();
-            disable_deny();
-            goto handle_modules;
-        }
         get_db_settings(dbs, ZYGISK_CONFIG);
         get_db_settings(dbs, WHITELIST_CONFIG);
         get_db_settings(dbs, DENYLIST_CONFIG);
+
+        if(coreonly_mode){
+            LOGI("** Core-only mode, ignore modules\n");
+            // Core-only mode only disable modules
+            boot_state |= FLAG_SAFE_MODE;
+            disable_modules();
+            delprop("persist.zygisk.native.bridge", true);
+            // we still allow zygisk
+            zygisk_enabled = dbs[ZYGISK_CONFIG];
+            // sulist mode does not support zygisk
+            sulist_enabled = dbs[DENYLIST_CONFIG] && dbs[WHITELIST_CONFIG] && !zygisk_enabled;
+            initialize_denylist();
+            prepare_modules();
+            goto early_abort;
+        }
+        if (bootloop_protect) {
+            if (!check_bootloop("boot_record", COUNT_FAILBOOT,3))
+                LOGE("cannot record boot\n");
+        }
+        exec_common_scripts("post-fs-data");
 
         zygisk_enabled = dbs[ZYGISK_CONFIG];
         // sulist mode does not support zygisk
         sulist_enabled = dbs[DENYLIST_CONFIG] && dbs[WHITELIST_CONFIG] && !zygisk_enabled;
         initialize_denylist();
-
-    handle_modules:
-        if (core_only(false)) prepare_modules();
-        else handle_modules();
+        handle_modules();
     }
 
 early_abort:
@@ -736,10 +791,8 @@ static void late_start() {
 
     LOGI("** late_start service mode running\n");
 
-    if (!core_only(false)) {
-        exec_common_scripts("service");
-        exec_module_scripts("service");
-    }
+    exec_common_scripts("service");
+    exec_module_scripts("service");
 
     boot_state |= FLAG_LATE_START_DONE;
 }
@@ -749,7 +802,6 @@ static void boot_complete() {
     setup_logfile(false);
 
     LOGI("** boot-complete triggered\n");
-    rm_rf(TRIGGER_BL);
     rm_rf(COUNT_FAILBOOT);
     tune_f2fs();
 
@@ -760,45 +812,6 @@ static void boot_complete() {
     // Ensure manager exists
     check_pkg_refresh();
     get_manager(0, nullptr, true);
-}
-
-
-void reboot_coreonly(){
-    close(xopen("/data/unencrypted/.disable_magisk", O_RDONLY | O_CREAT, 0));
-    close(xopen("/cache/.disable_magisk", O_RDONLY | O_CREAT, 0));
-    close(xopen("/persist/.disable_magisk", O_RDONLY | O_CREAT, 0));
-    close(xopen("/metadata/.disable_magisk", O_RDONLY | O_CREAT, 0));
-    close(xopen("/mnt/vendor/persist/.disable_magisk", O_RDONLY | O_CREAT, 0));
-    close(xopen("/data/adb/.disable_magisk", O_RDONLY | O_CREAT, 0));
-    exec_command_sync("/system/bin/reboot", "recovery");
-}
-
-bool check_bootloop(const char *name, const char *filename, int max)
-{
-	int n=1;
-	if (access(filename, F_OK) != 0) {
-		// not exist, we need create file with initial value
-		FILE *ztrigger=fopen(filename, "wb");
-		if (ztrigger == NULL) return false; // failed
-		fwrite(&n,1,sizeof(int),ztrigger);
-		fclose(ztrigger);
-	}
-	FILE *ztrigger=fopen(filename, "rb");
-	if (ztrigger == NULL) return false; // failed
-	fread(&n, 1, sizeof(int), ztrigger);
-	fclose(ztrigger);
-	// current number here
-        if (n >= max) {
-            LOGI("anti_bootloop: %s reachs %d times, restart!\n", name, max);
-            reboot_coreonly();
-        } else LOGI("anti_bootloop: %s count = %d\n", name, n);
-	
-	ztrigger=fopen(filename, "wb");
-	if (ztrigger == NULL) return false; // failed
-	n++; // increase the number
-	fwrite(&n, 1, sizeof(int), ztrigger);
-	fclose(ztrigger);
-	return true;
 }
 
 void boot_stage_handler(int code) {
@@ -828,7 +841,10 @@ void boot_stage_handler(int code) {
 void perform_check_bootloop() {
     db_settings dbs;
     get_db_settings(dbs, ANTI_BOOTLOOP);
-    if (((boot_state & FLAG_BOOT_COMPLETE) == 0 && dbs[ANTI_BOOTLOOP]) &&
-         !check_bootloop("zygote_restart",TRIGGER_BL,8))
-         LOGE("anti_bootloop: cannot run check\n");
+    if (((boot_state & FLAG_BOOT_COMPLETE) == 0 && bootloop_protect)){
+        ztrigger_count++;
+        if (ztrigger_count >= 8){
+            reboot_coreonly();
+        }
+    }
 }

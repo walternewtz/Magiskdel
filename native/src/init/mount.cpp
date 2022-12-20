@@ -19,6 +19,16 @@ struct devinfo {
     char dmname[32];
 };
 
+
+static const char *preinit_part[]={
+        PREINIT_PARTS ,
+        nullptr
+    };
+static const char *mirror_part[]={
+        PREINIT_MIRRORS ,
+        nullptr
+    };
+
 static vector<devinfo> dev_list;
 
 static void parse_device(devinfo *dev, const char *uevent) {
@@ -253,14 +263,6 @@ success:
     xsymlink(custom_early_dir.data(), path);
     cp_afc(full_early_dir.data(), INTLROOT "/early-mount.d");
 
-    const char *preinit_part[]={
-        "/data/unencrypted", "/data/adb", "/persist", "/metadata", "/cache",
-        nullptr
-    };
-    const char *mirror_part[]={
-        "/data", "/persist", "/metadata", "/cache",
-        nullptr
-    };
     char buf[4098];
     bool coreonly = false;
     for (int i=0;preinit_part[i];i++) {
@@ -402,14 +404,10 @@ void early_mount(const char *magisk_tmp){
     LOGI("** early-mount start\n");
     char buf[4098];
     const char *part[]={
-        "/vendor", "/product", "/system_ext",
+        SPEC_PARTS ,
         nullptr
     };
 
-    const char *preinit_part[]={
-        "/data/unencrypted", "/data/adb", "/persist", "/metadata", "/cache",
-        nullptr
-    };
     for (int i=0;preinit_part[i];i++) {
         sprintf(buf, "%s/" MIRRDIR "%s/.disable_magisk", magisk_tmp, preinit_part[i]);
         if (access(buf, F_OK) == 0) return;
