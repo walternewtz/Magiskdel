@@ -59,15 +59,13 @@ void crawl_procfs(const std::function<bool(int)> &fn);
 
 // Revert
 void revert_daemon(int pid, int client = -1);
-void su_daemon(int pid);
 void revert_unmount(int pid = -1);
-//void cleanup_preload();
+void su_daemon(int pid);
 void do_check_pid(int client);
 
 //Event
 void disable_monitor();
 void enable_monitor();
-
 
 extern std::atomic<bool> denylist_enforced;
 extern std::atomic<bool> do_monitor;

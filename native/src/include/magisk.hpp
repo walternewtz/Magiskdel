@@ -24,12 +24,39 @@ extern std::string  MAGISKTMP;
 #define MODULEMNT   INTLROOT "/modules"
 #define BBPATH      INTLROOT "/busybox"
 #define ROOTOVL     INTLROOT "/rootdir"
+#define WORKERDIR   INTLROOT "/worker"
 #define SHELLPTS    INTLROOT "/pts"
 #define ROOTMNT     ROOTOVL  "/.mount_list"
 #define ZYGISKBIN   INTLROOT "/zygisk"
 #define SELINUXMOCK INTLROOT "/selinux"
 
 constexpr const char *applet_names[] = { "su", "resetprop", "magiskhide", nullptr };
+
+#define SPEC_PARTS \
+    "/vendor", \
+    "/system_ext", \
+    "/product"
+
+#define OTHER_PARTS \
+    "/my_carrier", \
+    "/my_company", \
+    "/my_engineering", \
+    "/my_heytap", \
+    "/my_preload", \
+    "/my_product", \
+    "/my_region", \
+    "/my_stock", \
+    "/prism", \
+    "/optics", \
+    "/odm", \
+    "/my_manifest"
+
+#define RO_PARTS "/system", SPEC_PARTS, OTHER_PARTS
+
+#define MIRRORS "/cache", "/data", "/metadata", "/persist", RO_PARTS
+
+#define PREINIT_MIRRORS "/data", "/persist", "/metadata", "/cache"
+#define PREINIT_PARTS "/data/unencrypted", "/data/adb", "/persist", "/metadata", "/cache"
 
 #define POST_FS_DATA_WAIT_TIME       40
 #define POST_FS_DATA_SCRIPT_MAX_TIME 35

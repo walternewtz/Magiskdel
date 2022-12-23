@@ -15,7 +15,6 @@ using namespace std;
 [[noreturn]] static void usage() {
     fprintf(stderr,
 R"EOF(MagiskHide Config CLI
-
 Usage: magiskhide [action [arguments...] ]
 Actions:
    status          Return the MagiskHide status
@@ -27,24 +26,19 @@ Actions:
    ls              Print the current hidelist (sulist)
    exec CMDs...    Execute commands in isolated mount
                    namespace and do all unmounts
-
 Magisk Delta specific Actions:
    version         Print MagiskHide version
    --do-unmount [PID...]
                    Unmount all Magisk modifications
                    directly [in another namespace...]
-   --monitor [enable|disable]
-                   Enable or disable MagiskHide monitor
    --check PID     Manually trigger MagiskHide/SuList
-
-
 )EOF");
     exit(1);
 }
 
 void denylist_handler(int client, const sock_cred *cred) {
     if (client < 0) {
-        revert_unmount();
+        revert_daemon(1, -client);
         return;
     }
 
@@ -123,10 +117,6 @@ int denylist_cli(int argc, char **argv) {
         return 0;
     } else if (argc > 2 && argv[1] == "--check"sv)
         req = DenyRequest::CHECK_PID;
-    else if (argc > 2 && argv[1] == "--monitor"sv && argv[2] == "enable"sv)
-        req = DenyRequest::START_MONITOR;
-    else if (argc > 2 && argv[1] == "--monitor"sv && argv[2] == "disable"sv)
-        req = DenyRequest::STOP_MONITOR;
     else if (argv[1] == "--do-unmount"sv) {
         int fd = connect_daemon(MainRequest::GET_PATH);
         MAGISKTMP = read_string(fd);
@@ -136,15 +126,16 @@ int denylist_cli(int argc, char **argv) {
                 int processid=atoi(argv[num-1]);
                 revert_unmount(processid);
             }
-        } else revert_unmount();
+        } else revert_unmount(-1);
         exit(0);
     } else if (argv[1] == "exec"sv && argc > 2) {
+        switch_mnt_ns(1);
         xunshare(CLONE_NEWNS);
         xmount(nullptr, "/", nullptr, MS_PRIVATE | MS_REC, nullptr);
         int fd = connect_daemon(MainRequest::GET_PATH);
         MAGISKTMP = read_string(fd);
         close(fd);
-        revert_unmount();
+        revert_unmount(-1);
         execvp(argv[2], argv + 2);
         exit(1);
     } else {

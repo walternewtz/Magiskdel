@@ -16,6 +16,7 @@
 #include <daemon.hpp>
 #include <resetprop.hpp>
 #include <selinux.hpp>
+#include <parse_mntinfo.hpp>
 
 #include "core.hpp"
 
@@ -24,7 +25,9 @@
 
 #define VLOGD(tag, from, to) LOGD("%-8s: %s <- %s\n", tag, to, from)
 
-static bool log_enabled = true;
+#define FIX_MIRRORS 1
+
+void mount_mirrors(bool setup_sulist = false);
 
 #define TST_RAMFS_MAGIC    0x858458f6
 #define TST_TMPFS_MAGIC    0x01021994
@@ -71,59 +74,6 @@ static const char *F2FS_SYSFS_PATH = nullptr;
  * Setup *
  *********/
 
-#define MNT_DIR_IS(dir) (me->mnt_dir == string_view(dir))
-#define MNT_TYPE_IS(type) (me->mnt_type == string_view(type))
-#define SETMIR(b, part) ssprintf(b, sizeof(b), "%s/" MIRRDIR "/" #part, MAGISKTMP.data())
-#define SETBLK(b, part) ssprintf(b, sizeof(b), "%s/" BLOCKDIR "/" #part, MAGISKTMP.data())
-
-#define do_mount_mirror(part) {     \
-    SETMIR(buf1, part);             \
-    SETBLK(buf2, part);             \
-    unlink(buf2);                   \
-    mknod(buf2, S_IFBLK | 0600, st.st_dev); \
-    xmkdir(buf1, 0755);             \
-    int flags = 0;                  \
-    auto opts = split_ro(me->mnt_opts, ",");\
-    for (string_view s : opts) {    \
-        if (s == "ro") {            \
-            flags |= MS_RDONLY;     \
-            break;                  \
-        }                           \
-    }                               \
-    int ret = xmount(buf2, buf1, me->mnt_type, flags, nullptr); \
-    if (ret != 0) xmount(buf2, buf1, me->mnt_type, 0, nullptr); \
-    if (log_enabled) LOGI("mount: %s\n", buf1);      \
-}
-
-#define mount_orig_mirror(dir, part) \
-if (MNT_DIR_IS("/" #dir)  \
-    && !MNT_TYPE_IS("tmpfs") \
-    && !MNT_TYPE_IS("overlay") \
-    && lstat(me->mnt_dir, &st) == 0) { \
-    do_mount_mirror(part); \
-    break;                 \
-}
-
-#define mount_mirror(part) mount_orig_mirror(part, part)
-
-#define link_mirror(part) \
-SETMIR(buf1, part); \
-if (access("/system/" #part, F_OK) == 0 && access(buf1, F_OK) != 0) { \
-    xsymlink("./system/" #part, buf1); \
-    if (log_enabled) LOGI("link: %s\n", buf1); \
-}
-
-#define link_orig_dir(dir, part) \
-if (MNT_DIR_IS(dir) && !MNT_TYPE_IS("tmpfs") && !MNT_TYPE_IS("overlay")) { \
-    SETMIR(buf1, part);          \
-    rmdir(buf1);                 \
-    xsymlink(dir, buf1);         \
-    if (log_enabled) LOGI("link: %s\n", buf1);    \
-    break;                       \
-}
-
-#define link_orig(part) link_orig_dir("/" #part, part)
-
 void recreate_sbin_v2(const char *mirror, bool use_bind_mount) {
     auto dp = xopen_dir(mirror);
     int src = dirfd(dp.get());
@@ -158,66 +108,198 @@ void recreate_sbin_v2(const char *mirror, bool use_bind_mount) {
     }
 }
 
-void mount_mirrors() {
-    char buf1[4096];
-    char buf2[4096];
+string rootmnt_dir;
 
-    LOGI("* Prepare worker\n");
-
-    ssprintf(buf1, sizeof(buf1), "%s/" WORKERDIR, MAGISKTMP.data());
-    xmount(buf1, buf1, nullptr, MS_BIND, nullptr);
-    xmount(nullptr, buf1, nullptr, MS_PRIVATE, nullptr);
-
-    LOGI("* Mounting mirrors\n");
-
-    parse_mnt("/proc/mounts", [&](mntent *me) {
-        struct stat st{};
-        do {
-            mount_mirror(system)
-            mount_mirror(vendor)
-            mount_mirror(product)
-            mount_mirror(system_ext)
-            mount_mirror(my_carrier)
-            mount_mirror(my_company)
-            mount_mirror(my_engineering)
-            mount_mirror(my_heytap)
-            mount_mirror(my_preload)
-            mount_mirror(my_product)
-            mount_mirror(my_region)
-            mount_mirror(my_stock)
-            mount_mirror(my_manifest)
-            mount_mirror(prism)
-            mount_mirror(optics)
-            mount_mirror(odm)
-            mount_mirror(data)
-            mount_mirror(cache)
-            mount_mirror(metadata)
-            mount_mirror(persist)
-            mount_orig_mirror(mnt/vendor/persist, persist)
-            if (SDK_INT >= 24 && MNT_DIR_IS("/proc") && !strstr(me->mnt_opts, "hidepid=2")) {
-                xmount(nullptr, "/proc", nullptr, MS_REMOUNT, "hidepid=2,gid=3009");
-                break;
-            }
-        } while (false);
-        return true;
-    });
-    SETMIR(buf1, system);
-    if (access(buf1, F_OK) != 0) {
-        xsymlink("./system_root/system", buf1);
-        if (log_enabled) LOGI("link: %s\n", buf1);
-        parse_mnt("/proc/mounts", [&](mntent *me) {
-            struct stat st;
-            if (MNT_DIR_IS("/") && me->mnt_type != "rootfs"sv && stat("/", &st) == 0) {
-                do_mount_mirror(system_root)
-                return false;
-            }
-            return true;
-        });
+bool mount_correct(const std::string_view dev, const std::string_view dir,
+	const std::string_view root, const std::string_view type, int flags = 0)
+{
+    char *ranc = random_strc(20);
+    string root_mnt = rootmnt_dir + "/" + ranc;
+    xmkdirs(root_mnt.data(), 0755);
+    delete ranc;
+    const char *init_mnt = (root == "/"sv)? dir.data(): root_mnt.data();
+    // first mount the device
+    if (mount(dev.data(), init_mnt, type.data(), flags, nullptr) ||
+        xmount("", init_mnt, nullptr, MS_PRIVATE, nullptr))
+        return false;
+    if (root != "/"sv){
+        // re-bind mount
+        string mnt_dir = root_mnt + string(root);
+        if (xmount(mnt_dir.data(), dir.data(), nullptr, MS_BIND, nullptr)){
+            return false;
+        }
     }
-    link_mirror(vendor)
-    link_mirror(product)
-    link_mirror(system_ext)
-    log_enabled = false;
+    LOGD("mount: %s (%s)\n", dir.data(), type.data());
+    return true;
+}
+
+bool mount_recreate(const std::string_view from, const std::string_view to){
+    return !xmount(from.data(), to.data(), nullptr, MS_BIND, nullptr) &&
+           !xmount("", to.data(), nullptr, MS_PRIVATE, nullptr);
+}
+
+void mount_mirrors(bool setup_sulist) {
+    rootmnt_dir = MAGISKTMP + "/" INTLROOT "/rootmnt";
+    xmkdirs(rootmnt_dir.data(), 0755);
+    xmount("tmpfs", rootmnt_dir.data(), "tmpfs", 0, nullptr);
+
+    string mirror_dir = MAGISKTMP + "/" MIRRDIR;
+    string block_dir = "/dev";
+    string system_mirror = mirror_dir + "/system";
+    string worker_dir = MAGISKTMP + "/" WORKERDIR;
+    mkdirs(worker_dir.data());
+    xmount(worker_dir.data(), worker_dir.data(), nullptr, MS_BIND, nullptr);
+    xmount("", worker_dir.data(), nullptr, MS_PRIVATE, nullptr);
+    const char *include_parts[] = { MIRRORS, "/mnt/vendor/persist", nullptr };
+
+    if (setup_sulist) block_dir = MAGISKTMP + "/" BLOCKDIR;
+
+    std::vector<string> mounted_dirs;
+    std::vector<MountInfo> mount_info;
+    // trim mountinfo
+    do {
+        auto current_mount_info = ParseMountInfo("self", true, include_parts, nullptr);
+        std::vector<string> mountpoint;
+        for (auto &info : reversed(current_mount_info)){
+            if (info.target != "/") {
+                for (auto &s : mountpoint)
+                    if (s == info.target)
+                        goto next_mountpoint;
+            }
+            mount_info.emplace_back(info);
+            mountpoint.emplace_back(info.target);
+            next_mountpoint:
+            continue;
+        }
+    } while(false);
+
+    bool rootdir_mounted = false;
+    for (auto &info : reversed(mount_info)) {
+        const char *mnt_dir = info.target.data();
+        const char *mnt_type = info.type.data();
+        const char *mnt_opts = info.fs_option.data();
+        const char *mnt_root = info.root.data();
+        struct stat st{};
+        string src;
+        int flags = 0;
+        string dest = mirror_dir + mnt_dir;
+        auto opts = split_ro(mnt_opts, ",");
+            for (string_view s : opts) {
+                if (s == "ro") {
+                    flags |= MS_RDONLY;
+                    break;
+                }
+            }
+            do {
+                char *ranc = random_strc(get_random(4,12));
+                src = block_dir + "/" + ranc;
+                delete ranc;
+            } while (access(src.data(),F_OK) == 0);
+            if (lstat(mnt_dir, &st) != 0 ||
+                // skip underlying mount
+                st.st_dev != info.device ||
+                // only mount /data, skip any mountpoint under /data
+                string(mnt_dir).starts_with("/data/") ||
+                // skip mount vfat
+                mnt_type == "vfat"sv)
+                continue;
+#if FIX_MIRRORS
+            if (rootdir_mounted && info.target.starts_with("/system/")){
+                if (major(st.st_dev) > 0)
+                    goto setup_mount_dev;
+                goto recreate_mnt;
+            }
+#endif
+            for (const auto &dir : mounted_dirs) {
+#if FIX_MIRRORS
+                if (info.target.starts_with(dir + "/")){
+                    if (major(st.st_dev) > 0)
+                        goto setup_mount_dev;
+                    goto recreate_mnt;
+                }
+#endif
+                if (string_view(mnt_dir) == dir) {
+                    // Already mounted
+                    goto next;
+                }
+            }
+            // handle nodev partitions like overlayfs /system
+            if (major(st.st_dev) == 0){
+                if (mnt_dir == "/"sv) {
+                    if (mnt_type == "rootfs"sv || mnt_type == "tmpfs"sv)
+                        continue;
+                    // overlayfs root directory ?
+                    dest = mirror_dir + "/system_root";
+                    xmkdir(dest.data(), 0755);
+                    if (mount_recreate(mnt_dir, dest)){
+                        LOGD("mount: %s (%s)\n", dest.data(), mnt_type);
+                        if (!symlink("./system_root/system", system_mirror.data()))
+                            LOGD("symlink: %s\n", system_mirror.data());
+                        rootdir_mounted = true;
+                        goto add_mounted_dir;
+                    } else {
+                        rm_rf(dest.data());
+                    }
+                } else {
+                    dest = mirror_dir + mnt_dir;
+                    xmkdir(dest.data(), 0755);
+                    if (mount_recreate(mnt_dir, dest)) {
+                        LOGD("mount: %s (%s)\n", dest.data(), mnt_type);
+                    }
+                }
+                continue;
+            }
+
+            // setup mirror partitions as usual
+            if (mnt_dir == "/mnt/vendor/persist"sv) {
+                dest = mirror_dir + "/persist";
+                mknod(src.data(), S_IFBLK | 0600, st.st_dev);
+                xmkdir(dest.data(), 0755);
+                if (mount_correct(src.data(), dest.data(), mnt_root, mnt_type, flags)){
+                    mounted_dirs.emplace_back("/mnt/vendor/persist");
+                    mounted_dirs.emplace_back("/persist");
+                }
+                goto on_success;
+            }
+            if (mnt_dir == "/"sv) {
+                dest = mirror_dir + "/system_root";
+                mknod(src.data(), S_IFBLK | 0600, st.st_dev);
+                xmkdir(dest.data(), 0755);
+                if (mount_correct(src.data(), dest.data(), mnt_root, mnt_type, flags)){
+                    if (!symlink("./system_root/system", system_mirror.data()))
+                        LOGD("symlink: %s\n", system_mirror.data());
+                    rootdir_mounted = true;
+                    goto add_mounted_dir;
+                }
+                goto on_success;
+            }
+            xmkdir(dest.data(), 0755);
+            setup_mount_dev:
+            mknod(src.data(), S_IFBLK | 0600, st.st_dev);
+            if (mount_correct(src.data(), dest.data(), mnt_root, mnt_type, flags)){
+                goto add_mounted_dir;
+            }
+
+            recreate_mnt:
+            if (mount_recreate(mnt_dir, dest))
+                LOGD("mount: %s (%s)\n", dest.data(), mnt_type);
+            continue;
+
+        add_mounted_dir:
+            mounted_dirs.emplace_back(mnt_dir);
+        on_success:
+            rm_rf(src.data());
+        next:
+            continue;
+    }
+    umount2(rootmnt_dir.data(), MNT_DETACH);
+    for (const char *part : { SPEC_PARTS }){
+        string dest = mirror_dir + part;
+        string src = string("./system") + part;
+        if (access(dest.data(), F_OK) != 0 && access(part, F_OK) == 0 && !symlink(src.data(), dest.data())) {
+            LOGD("symlink: %s\n", dest.data());
+        }
+    }
 }
 
 static bool magisk_env() {
@@ -585,6 +667,7 @@ static void post_fs_data() {
 
     LOGI("* Unlock device blocks\n");
     unlock_blocks();
+    LOGI("* Mount mirrors\n");
     mount_mirrors();
     prune_su_access();
 

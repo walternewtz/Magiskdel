@@ -6,6 +6,7 @@
 #include <daemon.hpp>
 #include <base.hpp>
 #include <selinux.hpp>
+#include <parse_mntinfo.hpp>
 
 #include "deny.hpp"
 
@@ -13,14 +14,12 @@
 
 using namespace std;
 
-void mount_mirrors();
+void mount_mirrors(bool setup_sulist);
 
 static void lazy_unmount(const char* mountpoint) {
     if (umount2(mountpoint, MNT_DETACH) != -1)
         LOGD("hide_daemon: Unmounted (%s)\n", mountpoint);
 }
-
-#define TMPFS_MNT(dir) (mentry->mnt_type == "tmpfs"sv && str_starts(mentry->mnt_dir, "/" #dir))
 
 void root_mount(int pid) {
     if (switch_mnt_ns(pid))
@@ -66,7 +65,14 @@ void root_mount(int pid) {
     xmkdir(BLOCKDIR, 0);
     xmkdir(MODULEMNT, 0);
 
-    mount_mirrors();
+    // in case some apps need to access to some internal files
+    string bb_dir = "/proc/1/root/" + MAGISKTMP + "/" BBPATH;
+    xsymlink(bb_dir.data(), BBPATH);
+
+    string src = "/proc/1/root/" + MAGISKTMP + "/" INTLROOT "/config";
+    cp_afc(src.data(), INTLROOT "/config");
+
+    mount_mirrors(true);
 
     xmount(MIRRDIR "/" MODULEROOT, MODULEMNT, nullptr, MS_BIND, nullptr);
 
@@ -93,7 +99,7 @@ void revert_daemon(int pid, int client) {
     if (fork_dont_care() == 0) {
         revert_unmount(pid);
         if (client >= 0) {
-            write_int(client, 0);
+            write_int(client, DenyResponse::OK);
         } else if (client == -1) {
             // send resume signal
             kill(pid, SIGCONT);
@@ -102,40 +108,24 @@ void revert_daemon(int pid, int client) {
     }
 }
 
-void revert_unmount(int pid){
+void revert_unmount(int pid) {
+    vector<string> targets;
+    struct stat data_stat;
+    int data_stat_ret = stat("/data", &data_stat);
     if (pid > 0) {
         if (switch_mnt_ns(pid))
             return;
-        LOGD("hide_daemon: handling PID=[%d]\n", pid);
+        LOGD("magiskhide: handling PID=[%d]\n", pid);
     }
-
-    vector<string> targets;
-
-    // Unmount dummy skeletons and MAGISKTMP
-    targets.push_back(MAGISKTMP);
-    parse_mnt("/proc/self/mounts", [&](mntent *mentry) {
-        if (TMPFS_MNT(system) || TMPFS_MNT(vendor) || TMPFS_MNT(product) ||
-            TMPFS_MNT(system_ext) || TMPFS_MNT(my_carrier) || TMPFS_MNT(my_company) ||
-            TMPFS_MNT(my_heytap) || TMPFS_MNT(my_preload) || TMPFS_MNT(my_product) ||
-            TMPFS_MNT(my_region) || TMPFS_MNT(my_stock) || TMPFS_MNT(my_manifest) ||
-            TMPFS_MNT(prism) || TMPFS_MNT(optics) || TMPFS_MNT(odm) ||
-            TMPFS_MNT(my_engineering))
-            targets.emplace_back(mentry->mnt_dir);
-        return true;
-    });
-
-    for (auto &s : reversed(targets))
-        lazy_unmount(s.data());
-    targets.clear();
-
-    // Unmount all Magisk created mounts
-    parse_mnt("/proc/self/mounts", [&](mntent *mentry) {
-        if (str_contains(mentry->mnt_fsname, BLOCKDIR))
-            targets.emplace_back(mentry->mnt_dir);
-        return true;
-    });
-
-    for (auto &s : reversed(targets))
+    auto mount_info = ParseMountInfo("self");
+    for (auto &info : mount_info) {
+        if (data_stat_ret == 0 && info.device == data_stat.st_dev && info.root.starts_with("/adb/modules/") ||
+            info.target.starts_with(MAGISKTMP) || info.root.starts_with("/" INTLROOT "/") || info.source.starts_with(MAGISKTMP) ||
+            (info.source == "magisktmpfs" && info.type == "tmpfs")) {
+                targets.emplace_back(std::move(info.target));
+        }
+    }
+    for (auto &s : targets)
         lazy_unmount(s.data());
 }
 

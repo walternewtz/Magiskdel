@@ -37,4 +37,33 @@ int tmpfs_mount(const char *from, const char *to){
     return ret;
 }
 
+// implement my own method to get only lowercase string
+char *random_strc(int n){
+    FILE *urandom = fopen("/dev/urandom", "re");
+    if (urandom == nullptr) return nullptr;
+    char *str = new char[n+1];
+    if (str == nullptr) {
+        fclose(urandom);
+        return nullptr;
+    }
+    for (int i=0;i<n;i++){
+        str[i] = 'a' + (fgetc(urandom) % ('z'-'a'+1));
+    }
+    fclose(urandom);
+    return str;
+}
+
+int get_random(int from, int to){
+    FILE *urandom = fopen("/dev/urandom", "re");
+    if (urandom == nullptr) return from;
+    int tmp, s=0, n = to-from+1;
+    while (n!=0){
+        do {
+            tmp = fgetc(urandom);
+        } while ( !(tmp >= '0' && tmp <= '9') );
+        s = s*10 + tmp - '0';
+        n/=10;
+    }
+    return from + s % (to-from+1);
+}
 

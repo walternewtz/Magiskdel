@@ -10,6 +10,7 @@
 #include <db.hpp>
 #include <resetprop.hpp>
 #include <flags.h>
+#include <parse_mntinfo.hpp>
 
 #include <core-rs.cpp>
 
@@ -18,6 +19,17 @@
 using namespace std;
 
 void perform_check_bootloop();
+void revert_root_patches(){
+    vector<string> targets;
+    auto mount_info = ParseMountInfo("self");
+    for (auto &info : mount_info) {
+        if (info.root.starts_with("/" ROOTOVL "/")) {
+            targets.emplace_back(std::move(info.target));
+        }
+    }
+    for (auto &s : targets)
+        umount2(s.data(), MNT_DETACH);
+}
 
 int SDK_INT = -1;
 bool HAVE_32 = false;
@@ -188,7 +200,7 @@ static void handle_request_sync(int client, int code) {
         setup_logfile(true);
         break;
     case MainRequest::STOP_DAEMON:
-        denylist_handler(-1, nullptr);
+        denylist_handler(-client, nullptr);
         // TODO: clean zygisk props
         write_int(client, 0);
         // Terminate the daemon!
@@ -360,22 +372,16 @@ static void daemon_entry() {
     auto cpu32 = getprop("ro.product.cpu.abilist32");
     LOGI("* Device API level: %d\n", SDK_INT);
     if (!cpu64.empty())
-        LOGI("* CPU ABI64: %s\n", cpu64.data());
+        LOGI("* CPU ABI 64-bit: %s\n", cpu64.data());
     if (!cpu32.empty()) {
-        LOGI("* CPU ABI32: %s\n", cpu32.data());
+        LOGI("* CPU ABI 32-bit: %s\n", cpu32.data());
         HAVE_32 = true;
     }
 
     restore_tmpcon();
 
     // SAR cleanups
-    auto mount_list = MAGISKTMP + "/" ROOTMNT;
-    if (access(mount_list.data(), F_OK) == 0) {
-        file_readline(true, mount_list.data(), [](string_view line) -> bool {
-            umount2(line.data(), MNT_DETACH);
-            return true;
-        });
-    }
+    revert_root_patches();
 
     // Load config status
     auto config = MAGISKTMP + "/" INTLROOT "/config";
