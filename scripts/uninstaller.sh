@@ -77,7 +77,7 @@ api_level_arch_detect
 
 ui_print "- Device platform: $ABI"
 
-if { [ "$(grep_prop SYSTEMMODE "$MAGISKTMP/.magisk/config")" == "true" ] || [ -d /system/etc/init/magisk ]; } && $BOOTMODE; then
+if { [ -z "$(grep_prop SHA1 "$MAGISKTMP/.magisk/config")" ] || [ -d /system/etc/init/magisk ]; } && $BOOTMODE; then
 
 MIRRORDIR="/dev/sysmount_mirror"
 ROOTDIR="$MIRRORDIR/system_root"
@@ -96,11 +96,19 @@ if $BOOTMODE; then
         mkblknode "$MIRRORDIR/block/system" /system
         mkdir "$SYSTEMDIR"
         force_mount "$MIRRORDIR/block/system" "$SYSTEMDIR" || return 1
+            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/system") print $0 }' | tail -1 | awk '{ print $4 }')"
+            if [ "$mountroot" != "/" ]; then
+                mount --bind "$SYSTEMDIR$mountroot" "$SYSTEMDIR"
+            fi
     else
         mkblknode "$MIRRORDIR/block/system_root" /
         mkdir "$ROOTDIR"
         force_mount "$MIRRORDIR/block/system_root" "$ROOTDIR" || return 1
         ln -fs ./system_root/system "$SYSTEMDIR"
+            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/") print $0 }' | tail -1 | awk '{ print $4 }')"
+            if [ "$mountroot" != "/" ]; then
+                mount --bind "$SYSTEMDIR$mountroot" "$ROOTDIR"
+            fi
     fi
 
     # check if /vendor is seperated fs
@@ -108,6 +116,10 @@ if $BOOTMODE; then
         mkblknode "$MIRRORDIR/block/vendor" /vendor
         mkdir "$VENDORDIR"
         force_mount "$MIRRORDIR/block/vendor" "$VENDORDIR" || return 1
+            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/vendor") print $0 }' | tail -1 | awk '{ print $4 }')"
+            if [ "$mountroot" != "/" ]; then
+                mount --bind "$SYSTEMDIR$mountroot" "$VENDORDIR"
+            fi
      else
         ln -fs ./system/vendor "$VENDORDIR"
     fi

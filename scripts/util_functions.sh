@@ -1002,7 +1002,7 @@ cleanup_system_installation(){
 }
 
 unmount_system_mirrors(){
-	if $BOOTMODE; then
+    if $BOOTMODE; then
         umount -l "$MIRRORDIR"
         rm -rf "$MIRRORDIR"
     else
@@ -1024,7 +1024,7 @@ warn_system_ro(){
 
 is_rootfs(){
     local root_blkid="$(mountpoint -d /)"
-	if ! $BOOTMODE && [ -d /system_root ] && mountpoint /system_root; then
+    if ! $BOOTMODE && [ -d /system_root ] && mountpoint /system_root; then
         return 1
     fi
     if $BOOTMODE && [ "${root_blkid%:*}" == 0 ]; then
@@ -1060,8 +1060,8 @@ direct_install_system(){
     ROOTDIR="$MIRRORDIR/system_root"
     SYSTEMDIR="$MIRRORDIR/system"
     VENDORDIR="$MIRRORDIR/vendor"
-	
-	if $BOOTMODE; then
+    
+    if $BOOTMODE; then
         # make sure sysmount is clean
         umount -l "$MIRRORDIR" 2>/dev/null
         rm -rf "$MIRRORDIR"
@@ -1073,10 +1073,18 @@ direct_install_system(){
             mkblknode "$MIRRORDIR/block/system" /system
             mkdir "$SYSTEMDIR"
             force_mount "$MIRRORDIR/block/system" "$SYSTEMDIR" || return 1
+            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/system") print $0 }' | tail -1 | awk '{ print $4 }')"
+            if [ "$mountroot" != "/" ]; then
+                mount --bind "$SYSTEMDIR$mountroot" "$SYSTEMDIR"
+            fi
         else
             mkblknode "$MIRRORDIR/block/system_root" /
             mkdir "$ROOTDIR"
             force_mount "$MIRRORDIR/block/system_root" "$ROOTDIR" || return 1
+            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/") print $0 }' | tail -1 | awk '{ print $4 }')"
+            if [ "$mountroot" != "/" ]; then
+                mount --bind "$SYSTEMDIR$mountroot" "$ROOTDIR"
+            fi
             mkdir "$ROOTDIR/sbin"
             ln -fs ./system_root/system "$SYSTEMDIR"
         fi
@@ -1086,18 +1094,22 @@ direct_install_system(){
             mkblknode "$MIRRORDIR/block/vendor" /vendor
             mkdir "$VENDORDIR"
             force_mount "$MIRRORDIR/block/vendor" "$VENDORDIR" || return 1
+            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/vendor") print $0 }' | tail -1 | awk '{ print $4 }')"
+            if [ "$mountroot" != "/" ]; then
+                mount --bind "$SYSTEMDIR$mountroot" "$VENDORDIR"
+            fi
          else
             ln -fs ./system/vendor "$VENDORDIR"
         fi
-	else
+    else
         local MIRRORDIR="/" ROOTDIR SYSTEMDIR VENDORDIR
         ROOTDIR="$MIRRORDIR/system_root"
         SYSTEMDIR="$MIRRORDIR/system"
         VENDORDIR="$MIRRORDIR/vendor"
         mount_partitions
         mount_apex
-	fi
-		
+    fi
+        
 
     ui_print "- Cleaning up"
     local checkfile="$MIRRORDIR/system/.check_$(random_str 10 20)"
@@ -1199,10 +1211,10 @@ setup_magisk(){
     echo -e "SYSTEMMODE=true\nRECOVERYMODE=false" >/sbin/.magisk/config
     # run magisk daemon
     /sbin/magisk --post-fs-data
-	i=0
+    i=0
     while [ ! -f /dev/.magisk_unblock ]; do
         i=\$((\$i+1))
-		if [ "\$i" -gt 40 ]; then
+        if [ "\$i" -gt 40 ]; then
             break
         fi
         sleep 1;
@@ -1221,7 +1233,7 @@ EOF
     fi
 
     unmount_system_mirrors
-	$BOOTMODE || recovery_cleanup
+    $BOOTMODE || recovery_cleanup
     fix_env "$INSTALLDIR"
     true
     return 0
