@@ -418,12 +418,12 @@ abstract class MagiskInstallImpl protected constructor(
 
     protected fun direct() = findImage() && extractFiles() && print_title_delta() && patchBoot() && flashBoot()
 
-    protected fun direct_system() = extractFiles() && "direct_install_system \"$installDir\"".sh().isSuccess
+    protected fun direct_system() = extractFiles() && "xdirect_install_system \"$installDir\" \"dummy\" \"$AppApkPath\"".sh().isSuccess
 
     protected fun secondSlot() =
         findSecondary() && extractFiles() && print_title_delta() && patchBoot() && flashBoot() && postOTA()
 
-    protected fun fixEnv() = extractFiles() && "fix_env $installDir".sh().isSuccess
+    protected fun fixEnv() = extractFiles() && "fix_env \"$installDir\" \"$AppApkPath\"".sh().isSuccess
 
     protected fun uninstall() = "run_uninstaller $AppApkPath".sh().isSuccess
 

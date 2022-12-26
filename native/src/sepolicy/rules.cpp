@@ -10,12 +10,16 @@ void sepolicy::magisk_rules() {
 
     // This indicates API 26+
     bool new_rules = exists("untrusted_app_25");
+    // Check if su domain exist
+    bool su_exist = exists("su");
+    if (!su_exist) type("su", "domain");
 
     // Prevent anything to change sepolicy except ourselves
     deny(ALL, "kernel", "security", "load_policy");
 
     type(SEPOL_PROC_DOMAIN, "domain");
     permissive(SEPOL_PROC_DOMAIN);  /* Just in case something is missing */
+    permissive("su"); /* For system mode Magisk */
     typeattribute(SEPOL_PROC_DOMAIN, "mlstrustedsubject");
     typeattribute(SEPOL_PROC_DOMAIN, "netdomain");
     typeattribute(SEPOL_PROC_DOMAIN, "bluetoothdomain");
@@ -24,6 +28,7 @@ void sepolicy::magisk_rules() {
 
     // Make our root domain unconstrained
     allow(SEPOL_PROC_DOMAIN, ALL, ALL, ALL);
+    allow("su", ALL, ALL, ALL);
     // Allow us to do any ioctl
     if (impl->db->policyvers >= POLICYDB_VERSION_XPERMS_IOCTL) {
         allowxperm(SEPOL_PROC_DOMAIN, ALL, "blk_file", ALL);

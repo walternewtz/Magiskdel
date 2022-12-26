@@ -7,6 +7,8 @@
 #
 ########################################################
 
+SYSTEMINSTALL=false
+
 # Detect whether in boot mode
 [ -z $BOOTMODE ] && ps | grep zygote | grep -qv grep && BOOTMODE=true
 [ -z $BOOTMODE ] && ps -A 2>/dev/null | grep zygote | grep -qv grep && BOOTMODE=true
@@ -116,7 +118,21 @@ main() {
   remove_system_su
   find_magisk_apk
   api_level_arch_detect
-  install_magisk
+  chmod -R 755 $MAGISKBIN
+  if [ "$SYSTEMINSTALL" == "true" ];then
+    unzip -oj "$ADDOND/magisk/magisk.apk" "res/raw/manager.sh"
+    BOOTMODE_OLD="$BOOTMODE"
+    . ./manager.sh
+    BOOTMODE="$BOOTMODE_OLD"
+    . $MAGISKBIN/util_functions.sh
+    if $BOOTMODE; then
+      direct_install_system "$MAGISKBINTMP" || { cleanup_system_installation; unmount_system_mirrors; abort "! Installation failed"; }
+    else
+      direct_install_system "$MAGISKBINTMP" || { cleanup_system_installation; abort "! Installation failed"; }
+    fi
+  else
+    install_magisk
+  fi
 
   # Cleanups
   cd /
@@ -130,9 +146,12 @@ main() {
 case "$1" in
   backup)
     rm -rf "$MAGISKTMPDIR"
-    mkdir -p "$MAGISKTMPDIR"
-    cp -af "$ADDOND/magisk/"* "$MAGISKTMPDIR"
-    mv "$MAGISKTMPDIR/boot_patch.sh.in" "$MAGISKTMPDIR/boot_patch.sh"
+    if [ -d "$ADDOND/magisk" ] || [ -d "$S/etc/init/magisk" ]; then
+      mkdir -p "$MAGISKTMPDIR"
+      cp -af "$ADDOND/magisk/"* "$MAGISKTMPDIR"
+      cp -af "$S/etc/init/magisk/"* "$MAGISKTMPDIR"
+      mv "$MAGISKTMPDIR/boot_patch.sh.in" "$MAGISKTMPDIR/boot_patch.sh"
+	fi
   ;;
   restore)
     # Stub

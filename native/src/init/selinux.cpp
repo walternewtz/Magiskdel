@@ -9,6 +9,14 @@
 
 using namespace std;
 
+int patch_sepol(const char *in, const char *out) {
+    auto sepol = unique_ptr<sepolicy>(sepolicy::from_file(in));
+    if (!sepol) return 1;
+    sepol->magisk_rules();
+    if (!sepol->to_file(out)) return 2;
+    return 0;
+}
+
 void MagiskInit::patch_sepolicy(const char *in, const char *out) {
     LOGD("Patching monolithic policy\n");
     auto sepol = unique_ptr<sepolicy>(sepolicy::from_file(in));

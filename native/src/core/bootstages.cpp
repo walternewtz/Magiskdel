@@ -218,7 +218,7 @@ void mount_mirrors(bool setup_sulist) {
     string block_dir = "/dev";
     string system_mirror = mirror_dir + "/system";
     string worker_dir = MAGISKTMP + "/" WORKERDIR;
-    mkdirs(worker_dir.data());
+    mkdirs(worker_dir.data(), 0755);
     xmount(worker_dir.data(), worker_dir.data(), nullptr, MS_BIND, nullptr);
     xmount("", worker_dir.data(), nullptr, MS_PRIVATE, nullptr);
     const char *include_parts[] = { MIRRORS, "/mnt/vendor/persist", nullptr };

@@ -45,16 +45,7 @@ is_mounted /data || mount /data || abort "! Unable to mount /data, please uninst
 mount_partitions
 check_data
 if ! $DATA_DE; then
-    if [ -d "/data/unencrypted/MAGISKBIN" ]; then
-       mount -t tmpfs tmpfs /data/adb
-       mkdir /data/adb/magisk
-       mkdir /data/adb/modules
-       mount --bind /data/unencrypted/MAGISKBIN /data/adb/magisk
-       mount --bind /data/unencrypted/magisk_modules /data/adb/modules
-    fi
-    if [ ! -d "/data/adb/magisk" ] || mkdir /data/adb/magisk; then
-       abort "! Cannot access /data, please uninstall with the Magisk app"
-    fi
+    abort "! Cannot access /data, please uninstall with the Magisk app"
 fi
 
 get_flags
@@ -77,50 +68,45 @@ api_level_arch_detect
 
 ui_print "- Device platform: $ABI"
 
-if { [ -z "$(grep_prop SHA1 "$MAGISKTMP/.magisk/config")" ] || [ -d /system/etc/init/magisk ]; } && $BOOTMODE; then
+if ( [ -z "$(grep_prop SHA1 "$MAGISKTMP/.magisk/config")" ] && $BOOTMODE ) || [ "$(grep_prop SYSTEMMODE /system/etc/init/magisk/config)" == "true" ]; then
 
 MIRRORDIR="/dev/sysmount_mirror"
 ROOTDIR="$MIRRORDIR/system_root"
 SYSTEMDIR="$MIRRORDIR/system"
 VENDORDIR="$MIRRORDIR/vendor"
+
+abort_install(){
+  umount -l "$MIRRORDIR"
+  rm -rf "$MIRRORDIR"
+  abort "! Installaion faled"
+}
 	
 if $BOOTMODE; then
-    # make sure sysmount is clean
+    # setup mirrors to get the original content
     umount -l "$MIRRORDIR" 2>/dev/null
     rm -rf "$MIRRORDIR"
-    mkdir "$MIRRORDIR" || return 1
+    mkdir -p "$MIRRORDIR" || return 1
     mount -t tmpfs -o 'mode=0755' tmpfs "$MIRRORDIR" || return 1
-    mkdir "$MIRRORDIR/block"
     if is_rootfs; then
         ROOTDIR=/
-        mkblknode "$MIRRORDIR/block/system" /system
         mkdir "$SYSTEMDIR"
-        force_mount "$MIRRORDIR/block/system" "$SYSTEMDIR" || return 1
-            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/system") print $0 }' | tail -1 | awk '{ print $4 }')"
-            if [ "$mountroot" != "/" ]; then
-                mount --bind "$SYSTEMDIR$mountroot" "$SYSTEMDIR"
-            fi
+        force_bind_mount "/system" "$SYSTEMDIR" || return 1
     else
-        mkblknode "$MIRRORDIR/block/system_root" /
         mkdir "$ROOTDIR"
-        force_mount "$MIRRORDIR/block/system_root" "$ROOTDIR" || return 1
-        ln -fs ./system_root/system "$SYSTEMDIR"
-            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/") print $0 }' | tail -1 | awk '{ print $4 }')"
-            if [ "$mountroot" != "/" ]; then
-                mount --bind "$SYSTEMDIR$mountroot" "$ROOTDIR"
-            fi
+        force_bind_mount "/" "$ROOTDIR" || return 1
+        if mountpoint -q /system; then
+            mkdir "$SYSTEMDIR"
+            force_bind_mount "/system" "$SYSTEMDIR" || return 1
+        else
+            ln -fs ./system_root/system "$SYSTEMDIR"
+        fi
     fi
 
     # check if /vendor is seperated fs
     if mountpoint -q /vendor; then
-        mkblknode "$MIRRORDIR/block/vendor" /vendor
         mkdir "$VENDORDIR"
-        force_mount "$MIRRORDIR/block/vendor" "$VENDORDIR" || return 1
-            mountroot="$(cat "/proc/self/mountinfo" | awk '{ if ($5 == "/vendor") print $0 }' | tail -1 | awk '{ print $4 }')"
-            if [ "$mountroot" != "/" ]; then
-                mount --bind "$SYSTEMDIR$mountroot" "$VENDORDIR"
-            fi
-     else
+        force_bind_mount "/vendor" "$VENDORDIR" || return 1
+    else
         ln -fs ./system/vendor "$VENDORDIR"
     fi
 else
