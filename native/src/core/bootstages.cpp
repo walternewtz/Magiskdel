@@ -743,7 +743,6 @@ static void post_fs_data() {
         getprop("ro.sys.safemode") == "1" || check_key_combo() || should_skip_all()) {
         boot_state |= FLAG_SAFE_MODE;
         LOGI("** Safe mode triggered\n");
-        delprop("persist.zygisk.native.bridge", true);
         // Disable all modules and denylist so next boot will be clean
         disable_modules();
         disable_deny();
@@ -758,7 +757,6 @@ static void post_fs_data() {
             // Core-only mode only disable modules
             boot_state |= FLAG_SAFE_MODE;
             disable_modules();
-            delprop("persist.zygisk.native.bridge", true);
             // we still allow zygisk
             zygisk_enabled = dbs[ZYGISK_CONFIG];
             // sulist mode does not support zygisk

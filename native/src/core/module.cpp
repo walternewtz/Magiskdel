@@ -587,8 +587,8 @@ static void inject_magisk_bins(root_node *system) {
 #include <wait.h>
 
 std::string orig_native_bridge = "0";
-std::string nb_replace_lib = "";
-std::string nb_replace_bak = "";
+std::string nb_replace_lib = "0";
+std::string nb_replace_bak = "0";
 static bool nb_replace = false;
 
 static int extract_bin(const char *prog, const char *dst) {
@@ -661,12 +661,23 @@ static void inject_zygisk_libs(root_node *system) {
     INJECT(32, "lib")
 }
 
+static bool find_lib(const char *lib){
+    string lib32 = "/system/lib/"s + lib;
+    string lib64 = "/system/lib64/"s + lib;
+    return access(lib32.data(), F_OK) == 0 ||
+           access(lib64.data(), F_OK) == 0;
+}
+
 static void prepare_replace_nb(){
     LOGD("zygisk: replace native bridge [%s]\n", nb_replace_lib.data());
     nb_replace = true;
-    nb_replace_bak = nb_replace_lib + ".bak"s;
-    setprop(NATIVE_BRIDGE_PROP, nb_replace_bak.data(), false);
-    orig_native_bridge = nb_replace_bak;
+    char *ranc;
+    do {
+        ranc = random_strc(get_random(5,16));
+        nb_replace_bak = "lib"s + ranc + ".so";
+        delete ranc;
+    } while (find_lib(nb_replace_bak.data()));
+    LOGD("zygisk: backup native bridge [%s]\n", nb_replace_bak.data());
 }
 
 void magic_mount() {
@@ -715,13 +726,10 @@ void magic_mount() {
     if (zygisk_enabled) {
         orig_native_bridge = getprop(NATIVE_BRIDGE_PROP);
 
-        // FOR DEBUG
-        nb_replace_lib = getprop("persist.zygisk.native.bridge");
-        if (!nb_replace_lib.empty() && nb_replace_lib != "0"){
-            prepare_replace_nb();
-            delprop("persist.zygisk.native.bridge", false);
-        } else if (access("/system/lib/libnb.so", F_OK) == 0 || access("/system/lib64/libnb.so", F_OK) == 0) {
-            // REPLACE /system/lib/libnb.so, BACKUP /system/lib/libnb.so.bak
+        // NoxPlayer Android 9 hardcoded native bridge name
+        // But NATIVE_BRIDGE_PROP is "0"
+        if (orig_native_bridge == "0" && find_lib("libnb.so")) {
+            // directly replace libnb.so
             nb_replace_lib = "libnb.so";
             prepare_replace_nb();
         }

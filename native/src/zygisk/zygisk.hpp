@@ -12,6 +12,7 @@
 
 extern std::string orig_native_bridge;
 extern std::string nb_replace_lib;
+extern std::string nb_replace_bak;
 
 namespace ZygiskRequest {
 enum : int {

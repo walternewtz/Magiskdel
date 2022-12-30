@@ -46,6 +46,7 @@ extern "C" __used void* zygisk_inject_entry(void *handle, void *callbacks) {
         MAGISKTMP = read_string(fd);
         ZLOGD("read magisktmp %s\n", MAGISKTMP.c_str());
         auto orig_bridge_name = read_string(fd);
+        auto bak_bridge_name = read_string(fd);
         int sdk = read_int(fd);
         close(fd);
 
@@ -54,9 +55,13 @@ extern "C" __used void* zygisk_inject_entry(void *handle, void *callbacks) {
             break;
         }
 
+        if (bak_bridge_name != "0")
+            orig_bridge_name = bak_bridge_name;
+
         if (orig_bridge_name == "0") {
             break;
         }
+        ZLOGD("original native bridge: %s\n", orig_bridge_name.data());
 
         orig_bridge = dlopen(orig_bridge_name.data(), RTLD_NOW);
         if (orig_bridge == nullptr) {
@@ -298,6 +303,7 @@ static void setup(int client, const sock_cred *cred) {
     write_int(client, 0);
     write_string(client, MAGISKTMP);
     write_string(client, orig_native_bridge);
+    write_string(client, nb_replace_bak);
     write_int(client, SDK_INT);
 }
 
