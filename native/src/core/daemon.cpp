@@ -225,14 +225,25 @@ static void handle_request(pollfd *pfd) {
     sock_cred cred;
     bool is_root;
     bool is_zygote;
+    bool unsafe = false;
     int code;
+    int c_fd;
 
     if (!get_client_cred(client, &cred)) {
         // Client died
         goto done;
     }
+    // Placebo selinux
+    if (selinux_enabled() && (c_fd = xopen("/proc/1/attr/current", O_RDONLY)) >= 0){
+        char buf[128];
+        if (xread(c_fd, buf, sizeof(buf)) > 0 && buf != "u:r:init:s0"sv){
+            LOGW("Invalid init selinux context: [%s]\n", buf);
+            unsafe = cred.context == string_view(buf);
+        }
+        close(c_fd);
+    }
     is_root = cred.uid == AID_ROOT;
-    is_zygote = cred.context == "u:r:zygote:s0";
+    is_zygote = cred.context == "u:r:zygote:s0" || unsafe;
 
     if (!is_root && !is_zygote && !is_client(cred.pid)) {
         // Unsupported client state
