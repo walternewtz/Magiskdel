@@ -49,6 +49,22 @@ Available applets:
 }
 
 int magisk_main(int argc, char *argv[]) {
+    if (argc >= 2 && argv[1] == "--auto-selinux"sv) {
+        if (selinux_enabled()) {
+            int secontext_fd = xopen("/proc/self/attr/current", O_RDWR);
+            if (secontext_fd >= 0 && (
+                write(secontext_fd, "u:r:" SEPOL_PROC_DOMAIN ":s0", sizeof("u:r:" SEPOL_PROC_DOMAIN ":s0")) > 0 ||
+                // if selinux cannot be changed to u:r:magisk:s0, try u:r:su:s0
+                write(secontext_fd, "u:r:su:s0", sizeof("u:r:su:s0")) > 0)) {
+                char current_con[128];
+                xread(secontext_fd, current_con, sizeof(current_con));
+                fprintf(stderr, "SeLinux context: %s\n", current_con);
+            }
+            close(secontext_fd);
+        }
+        argc--;
+        argv++;
+    }
     if (argc < 2)
         usage();
     if (argv[1] == "-c"sv) {
