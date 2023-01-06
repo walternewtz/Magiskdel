@@ -78,11 +78,6 @@ void root_mount(int pid) {
 
     chdir("/");
 
-    // no need to inject magisk into "/system/bin"
-    // when "/sbin" is in PATH 
-    if (MAGISKTMP == "/sbin" && check_envpath("/sbin"))
-        return;
-
     su_mount();
 }
 

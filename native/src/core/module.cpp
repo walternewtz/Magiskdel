@@ -719,6 +719,7 @@ void magic_mount() {
     }
     if (MAGISKTMP != "/sbin" || !check_envpath("/sbin")) {
         // Need to inject our binaries into /system/bin
+        LOGD("su_mount: load magisk files\n");
         inject_magisk_bins(system);
     }
 
@@ -766,18 +767,55 @@ void magic_mount() {
 }
 
 void su_mount() {
+    log_enabled = false;
     node_entry::mirror_dir = MAGISKTMP + "/" MIRRDIR;
+    node_entry::module_mnt = MAGISKTMP + "/" MODULEMNT "/";
 
     auto root = make_unique<root_node>("");
     auto system = new root_node("system");
     root->insert(system);
-    
-    // Need to inject our binaries into /system/bin
-    LOGD("su_mount: /system/bin <- magisk\n");
-    inject_magisk_bins(system);
 
-    root->prepare();
-    root->mount();
+    char buf[4096];
+    for (const auto &m : *module_list) {
+        const char *module = m.name.data();
+        string module_mnt_dir = MAGISKTMP + "/" MODULEMNT "/" + module;
+        char *b = buf + sprintf(buf, "%s/", module_mnt_dir.data());
+        // Check whether skip mounting
+        strcpy(b, "skip_mount");
+        if (access(buf, F_OK) == 0)
+            continue;
+
+        // Double check whether the system folder exists
+        strcpy(b, "system");
+        if (access(buf, F_OK) != 0)
+            continue;
+
+        LOGD("%s: loading mount files\n", module);
+        b[-1] = '\0';
+        int fd = xopen(buf, O_RDONLY | O_CLOEXEC);
+        system->collect_files(module, fd);
+        close(fd);
+    }
+    if (MAGISKTMP != "/sbin" || !check_envpath("/sbin")) {
+        // Need to inject our binaries into /system/bin
+        LOGD("su_mount: load magisk files\n");
+        inject_magisk_bins(system);
+    }
+
+    if (!system->is_empty()) {
+        // Handle special read-only partitions
+        for (const char *part : { SPEC_PARTS, OTHER_PARTS }) {
+            struct stat st{};
+            if (lstat(part, &st) == 0 && S_ISDIR(st.st_mode)) {
+                if (auto old = system->extract(part + 1)) {
+                    auto new_node = new root_node(old);
+                    root->insert(new_node);
+                }
+            }
+        }
+        root->prepare();
+        root->mount();
+    }
 }
 
 void prepare_modules() {
