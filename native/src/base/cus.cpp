@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/ptrace.h>
 
 #include <base.hpp>
 
@@ -65,5 +66,12 @@ int get_random(int from, int to){
         n/=10;
     }
     return from + s % (to-from+1);
+}
+
+long xptrace(int request, pid_t pid, void *addr, void *data) {
+    long ret = ptrace(request, pid, addr, data);
+    if (ret < 0)
+        PLOGE("ptrace %d", pid);
+    return ret;
 }
 

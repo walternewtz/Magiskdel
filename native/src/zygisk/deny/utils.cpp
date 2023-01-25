@@ -23,7 +23,7 @@
 #include <resetprop.hpp>
 
 #include "deny.hpp"
-#include "logcat.hpp"
+#include <sys/ptrace.h>
 
 
 #define SNET_PROC    "com.google.android.gms.unstable"
@@ -521,7 +521,9 @@ bool is_deny_target(int uid, string_view process, int max_len) {
 
 static int inotify_fd = -1;
 static int data_system_wd = -1;
+static int prop_wd = -1;
 static bool sulist_unmount = false;
+static bool do_ptrace = false;
 static int system_server_pid = -1;
 
 static void new_zygote(int pid);
@@ -543,15 +545,24 @@ private:
 // zygote pid -> mnt ns
 static map<int, struct stat> zygote_map;
 
-// zygote list
-static vector<int> zygote_pid;
-
 // process stat
 static map<int, struct stat> pid_map;
+
+// attaches set
+static pid_set attaches;
 
 /********
  * Utils
  ********/
+ 
+// #define PTRACE_LOG(fmt, args...) LOGD("PID=[%d] " fmt, pid, ##args)
+#define PTRACE_LOG(...)
+
+static void detach_pid(int pid, int signal = 0) {
+    attaches[pid] = false;
+    ptrace(PTRACE_DETACH, pid, 0, signal);
+    PTRACE_LOG("detach\n");
+}
 
 static inline int read_ns(const int pid, struct stat *st) {
     char path[32];
@@ -647,7 +658,6 @@ static bool is_zygote(int pid_){
 static void check_zygote(){
     crawl_procfs([](int pid) -> bool {
         if (is_zygote(pid) && parse_ppid(pid) == 1) {
-            zygote_pid.emplace_back(pid);
             new_zygote(pid);
             return true;
         }
@@ -667,14 +677,11 @@ static void check_zygote(){
             } else {
                 pid_map[pid] = st;
             }
-            LOGI("proc_monitor: system_server started PID=[%d]\n", pid);
-            zygote_pid.emplace_back(pid);
             system_server_pid = pid;
             return true;
         }
 
         not_zygote:
-        zygote_pid.erase(std::remove(zygote_pid.begin(), zygote_pid.end(), pid), zygote_pid.end());
         return true;
     });
     if (is_zygote_done()) {
@@ -704,7 +711,8 @@ static void setup_inotify() {
     data_system_wd = inotify_add_watch(inotify_fd, "/data/system", IN_CLOSE_WRITE);
 
     // Monitor prop changes
-    inotify_add_watch(inotify_fd, "/dev/__properties__", IN_CLOSE_WRITE);
+    prop_wd = inotify_add_watch(inotify_fd, "/dev/__properties__", IN_CLOSE_WRITE);
+    inotify_add_watch(inotify_fd, "/dev/__properties__/property_info", IN_CLOSE_NOWRITE);
 
     // I think it is not needed to monitor app_process
     // Preserve these code in case
@@ -717,6 +725,25 @@ static void setup_inotify() {
         inotify_add_watch(inotify_fd, APP_PROC, IN_ACCESS);
     }
     */
+}
+
+static bool is_process(int pid) {
+    char buf[128];
+    char key[32];
+    int tgid;
+    sprintf(buf, "/proc/%d/status", pid);
+    auto fp = open_file(buf, "re");
+    // PID is dead
+    if (!fp)
+        return false;
+    while (fgets(buf, sizeof(buf), fp.get())) {
+        sscanf(buf, "%s", key);
+        if (key == "Tgid:"sv) {
+            sscanf(buf, "%*s %d", &tgid);
+            return tgid == pid;
+        }
+    }
+    return false;
 }
 
 static bool is_proc_alive(int pid) {
@@ -737,6 +764,8 @@ static bool is_proc_alive(int pid) {
  * Async signal handlers
  ************************/
 
+#define USAP_ENABLED "persist.device_config.runtime_native.usap_pool_enabled" 
+
 static void inotify_event(int) {
     // Make sure we can actually read stuffs
     // or else the whole thread will be blocked.
@@ -750,6 +779,13 @@ static void inotify_event(int) {
     char buf[512];
     auto event = reinterpret_cast<struct inotify_event *>(buf);
     read(inotify_fd, buf, sizeof(buf));
+    if (event->mask & IN_CLOSE_NOWRITE) {
+        char buf[500];
+        if (__system_property_get(USAP_ENABLED, buf) && buf == "true"sv) {
+            setprop(USAP_ENABLED, "false", false);
+        }
+        return;
+    }
     if (event->wd == data_system_wd && event->name == "packages.xml"sv)
         new_daemon_thread(&rescan_apps);
     new_daemon_thread(&check_zygote);
@@ -758,11 +794,14 @@ static void inotify_event(int) {
 static void term_thread(int) {
     LOGD("proc_monitor: cleaning up\n");
     zygote_map.clear();
-    zygote_pid.clear();
     pid_map.clear();
+    attaches.reset(); 
     close(inotify_fd);
+    system_server_pid = -1;
     inotify_fd = -1;
     fork_pid = 0;
+    do_ptrace = false;
+    sulist_unmount = false;
     // Restore all signal handlers that was set
     sigset_t set;
     sigfillset(&set);
@@ -850,7 +889,6 @@ check_and_hide:
     if (!is_deny_target(uid, cmdline, 95)) {
         goto not_target;
     }
-do_hide:
 
     // Ensure ns is separated
     struct stat ppid_st;
@@ -907,6 +945,7 @@ static void new_zygote(int pid) {
                it->second.st_ino != st.st_ino) {
                LOGI("proc_monitor: zygote PID=[%d]\n", pid);
                if (sulist_unmount) revert_daemon(pid, -2);
+               goto attach_zygote;
         }
         // Update namespace info
         //LOGD("proc_monitor: update zygote PID=[%d]\n", pid);
@@ -917,6 +956,14 @@ static void new_zygote(int pid) {
     LOGI("proc_monitor: zygote PID=[%d]\n", pid);
     if (sulist_unmount) revert_daemon(pid, -2);
     zygote_map[pid] = st;
+    attach_zygote:
+    if (!do_ptrace) return;
+    LOGI("proc_monitor: ptrace zygote PID=[%d]\n", pid);
+    xptrace(PTRACE_ATTACH, pid);
+    waitpid(pid, nullptr, __WALL | __WNOTHREAD);
+    xptrace(PTRACE_SETOPTIONS, pid, nullptr,
+            PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACEEXIT);
+    xptrace(PTRACE_CONT, pid);
 }
 
 #define DETACH_AND_CONT { detach_pid(pid); continue; }
@@ -942,8 +989,15 @@ void do_check_fork() {
     } else {
         pid_map[pid] = st;
     }
-
-    int i=0;
+    // ensure ptrace is released
+    usleep(2000);
+    // double detach
+    detach_pid(pid);
+    // stop process
+    kill(pid, SIGSTOP);
+    // should be enough
+    usleep(2000);
+    kill(pid, SIGCONT); int i=0;
     // Loop cmdline check
     while (!check_pid(pid)){
         if (i>=30000) break;
@@ -953,8 +1007,7 @@ void do_check_fork() {
     sprintf(path, "/proc/%d/cmdline", pid);
     if (read_file(path, cmdline, sizeof(cmdline)) && (cmdline == "usap32"sv || cmdline == "usap64"sv)) {
         LOGD("proc_monitor: usap bool PID=[%d]\n", pid);
-        // TODO: handle usap rather than disable it
-        __system_property_set("persist.device_config.runtime_native.usap_pool_enabled", "false");
+        // can't handle now
     }
 }
 
@@ -964,22 +1017,6 @@ void do_check_pid(int client){
     new_daemon_thread(&do_check_fork);
 }
 
-void LogPrint(struct logger_entry *buf) {
-    const char *msg = buf->msg + strlen(buf->msg) + 1;
-    if (const char *log = strstr(msg, "Forked child process")) {
-   	sscanf(log, "Forked child process %d", &fork_pid);
-        new_daemon_thread(&do_check_fork);
-    }
-}
-
-void EventPrint(struct logger_entry *buf) {
-    auto *eventData = reinterpret_cast<const unsigned char *>(buf) + buf->hdr_size;
-    auto *event_header = reinterpret_cast<const android_event_header_t *>(eventData);
-    if (event_header->tag != 30014) return;
-    auto *am_proc_start = reinterpret_cast<const android_event_am_proc_start *>(eventData);
-    fork_pid = am_proc_start->pid.data;
-    new_daemon_thread(&do_check_fork);
-}
 
 void proc_monitor() {
     monitor_thread = pthread_self();
@@ -1013,16 +1050,9 @@ void proc_monitor() {
     sigaction(SIGALRM, &act, nullptr);
 
     zygote_map.clear();
-    zygote_pid.clear();
     pid_map.clear();
     setup_inotify();
-    log_id_t buffer = LOG_ID_EVENTS;
-    void (*ProcessBuffer)(struct logger_entry*) = EventPrint;
-    if (SDK_INT >= 29) {
-        buffer = LOG_ID_MAIN;
-    	ProcessBuffer = LogPrint;
-    }
-    char buf[1024];
+    attaches.reset();
 
     // First try find existing zygotes
     check_zygote();
@@ -1035,8 +1065,8 @@ void proc_monitor() {
 
     start_monitor:
     pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
-    buf[0] = '\0';
-    sulist_unmount = false;
+    sulist_unmount = false; do_ptrace = false;
+    // wait until system_server start
     while (system_server_pid == -1 || !is_proc_alive(system_server_pid)) {
         system_server_pid = -1;
         pause();
@@ -1047,51 +1077,90 @@ void proc_monitor() {
         }
         sulist_unmount = true;
     }
+    // now ptrace zygote
+    for (auto it = zygote_map.begin(); it != zygote_map.end(); it++) {
+        int zygote = it->first;
+        xptrace(PTRACE_ATTACH, zygote);
+        waitpid(zygote, nullptr, __WALL | __WNOTHREAD);
+        xptrace(PTRACE_SETOPTIONS, zygote, nullptr,
+                PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACEEXIT);
+        xptrace(PTRACE_CONT, zygote);
+        LOGI("proc_monitor: ptrace zygote PID=[%d]\n", zygote);
+    }
+    do_ptrace = true;
 
-    for (;;) {
-        bool first;
-        if (__system_property_get("persist.log.tag", buf) && buf[0] != '\0')
-            __system_property_set("persist.log.tag", "");
-        // handle zygote preforking is not supported
-        if (__system_property_get("persist.device_config.runtime_native.usap_pool_enabled", buf) && buf == "true"sv)
-            __system_property_set("persist.device_config.runtime_native.usap_pool_enabled", "false");
-
-        unique_ptr<logger_list, decltype(&android_logger_list_free)> logger_list{
-            android_logger_list_alloc(0, 1, 0), &android_logger_list_free};
-        auto *logger = android_logger_open(logger_list.get(), buffer);
-        if (logger != nullptr) [[likely]] {
-            first = true;
-        } else {
+    for (int status;;) {
+        pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+        const int pid = waitpid(-1, &status, __WALL | __WNOTHREAD);
+        if (pid < 0) {
+            if (errno == ECHILD) {
+                // Nothing to wait yet, sleep and wait till signal interruption
+                LOGD("proc_monitor: nothing to monitor, wait for signal\n");
+                struct timespec ts = {
+                    .tv_sec = INT_MAX,
+                    .tv_nsec = 0
+                };
+                nanosleep(&ts, nullptr);
+                goto start_monitor;
+            }
             continue;
         }
-        struct log_msg msg{};
-        bool zygote = false;
-        int pid = -1;
-        while (true) {
-            if (android_logger_list_read(logger_list.get(), &msg) <= 0) [[unlikely]] {
-                break;
-            }
-            if (first) [[unlikely]] {
-                first = false;
-                continue;
-            }
-            zygote = false;
-            pid = msg.entry.pid;
-            for (int i=0;i<zygote_pid.size();i++) {
-                if (pid == zygote_pid[i]) {
-                    zygote = true;
-                    break;
+
+        pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
+
+        if (!WIFSTOPPED(status) /* Ignore if not ptrace-stop */)
+            DETACH_AND_CONT;
+
+        int event = WEVENT(status);
+        int signal = WSTOPSIG(status);
+
+        if (signal == SIGTRAP && event) {
+            unsigned long msg;
+            xptrace(PTRACE_GETEVENTMSG, pid, nullptr, &msg);
+            if (zygote_map.count(pid)) {
+                // Zygote event
+                switch (event) {
+                    case PTRACE_EVENT_FORK:
+                    case PTRACE_EVENT_VFORK:
+                        PTRACE_LOG("zygote forked: [%lu]\n", msg);
+                        attaches[msg] = false;
+                        detach_pid(msg);
+                        kill(msg, SIGSTOP);
+                        fork_pid = msg;
+                        new_daemon_thread(&do_check_fork);
+                        break;
+                    case PTRACE_EVENT_EXIT:
+                        PTRACE_LOG("zygote exited with status: [%lu]\n", msg);
+                        [[fallthrough]];
+                    default:
+                        zygote_map.erase(pid);
+                        DETACH_AND_CONT;
                 }
+            } else {
+                DETACH_AND_CONT;
             }
-            if (zygote) {
-                if (!is_proc_alive(system_server_pid)) {
-                    goto start_monitor;
-                }
-                pthread_sigmask(SIG_SETMASK, &orig_mask, nullptr);
-                ProcessBuffer(&msg.entry);
-                pthread_sigmask(SIG_UNBLOCK, &unblock_set, nullptr);
+            xptrace(PTRACE_CONT, pid);
+        } else if (signal == SIGSTOP) {
+            if (!attaches[pid]) {
+                // Double check if this is actually a process
+                attaches[pid] = is_process(pid);
             }
+            if (attaches[pid]) {
+                // This is a process, continue monitoring
+                PTRACE_LOG("SIGSTOP from child\n");
+                xptrace(PTRACE_SETOPTIONS, pid, nullptr,
+                        PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT);
+                xptrace(PTRACE_CONT, pid);
+            } else {
+                // This is a thread, do NOT monitor
+                PTRACE_LOG("SIGSTOP from thread\n");
+                DETACH_AND_CONT;
+            }
+
+        } else {
+            // Not caused by us, resend signal
+            xptrace(PTRACE_CONT, pid, nullptr, signal);
+            PTRACE_LOG("signal [%d]\n", signal);
         }
-        sleep(1);
     }
 }
