@@ -315,14 +315,14 @@ static void get_process_info(int client, const sock_cred *cred) {
     uint32_t flags = 0;
 
     check_pkg_refresh();
-    if (is_deny_target(uid, process)) {
+    if (!sulist_enabled && is_deny_target(uid, process)) {
         flags |= PROCESS_ON_DENYLIST;
     }
     int manager_app_id = get_manager();
     if (to_app_id(uid) == manager_app_id) {
         flags |= PROCESS_IS_MAGISK_APP;
     }
-    if (denylist_enforced) {
+    if (!sulist_enabled && denylist_enforced) {
         flags |= MAGISKHIDE_ENABLED;
     }
     if (uid_granted_root(uid)) {

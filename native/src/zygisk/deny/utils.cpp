@@ -402,7 +402,7 @@ int enable_deny() {
             denylist_enforced = false;
             return DenyResponse::ERROR;
         }
-        if (!zygisk_enabled && do_monitor) {
+        if ((!zygisk_enabled || sulist_enabled) && do_monitor) {
             auto ret1 = new_daemon_thread(&proc_monitor);
             if (ret1){
                 // cannot start monitor_proc, return daemon error
@@ -452,7 +452,7 @@ int disable_deny() {
         denylist_enforced = false;
         LOGI("* Disable MagiskHide\n");
     }
-    if (!zygisk_enabled && monitoring) {
+    if ((!zygisk_enabled || sulist_enabled) && monitoring) {
         pthread_kill(monitor_thread, SIGTERMTHRD);
         monitoring = false;
     }
