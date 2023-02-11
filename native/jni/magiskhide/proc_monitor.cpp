@@ -9,6 +9,7 @@
 #include <sys/mount.h>
 #include <vector>
 #include <bitset>
+#include <sys/syscall.h>
 
 #include <utils.hpp>
 
@@ -21,6 +22,8 @@ static int inotify_fd = -1;
 static void new_zygote(int pid);
 
 pthread_t monitor_thread;
+
+static int fork_pid = -1;
 
 /******************
  * Data structures
@@ -40,6 +43,9 @@ static pid_set attaches;
 
 // zygote pid -> mnt ns
 static map<int, struct stat> zygote_map;
+
+// handle list
+static vector<int> pid_list;
 
 /********
  * Utils
@@ -151,6 +157,12 @@ static void term_thread(int) {
     attaches.reset();
     close(inotify_fd);
     inotify_fd = -1;
+    fork_pid = -1;
+    for (int i = 0; i < pid_list.size(); i++) {
+        LOGD("proc_monitor: kill PID=[%d]\n", pid_list[i]);
+        kill(pid_list[i], SIGKILL);
+    }
+    pid_list.clear();
     // Restore all signal handlers that was set
     sigset_t set;
     sigfillset(&set);
@@ -209,7 +221,7 @@ static bool check_pid(int pid) {
     }
 
     if (cmdline == "zygote"sv || cmdline == "zygote32"sv || cmdline == "zygote64"sv ||
-        cmdline == "usap32"sv || cmdline == "usap64"sv)
+        cmdline == "usap32"sv || cmdline == "usap64"sv || cmdline == "<pre-initialized>"sv)
         return false;
 
     if (!is_hide_target(uid, cmdline, 95))
@@ -229,7 +241,8 @@ static bool check_pid(int pid) {
     // Detach but the process should still remain stopped
     // The hide daemon will resume the process after hiding it
     LOGI("proc_monitor: [%s] PID=[%d] UID=[%d]\n", cmdline, pid, uid);
-    detach_pid(pid, SIGSTOP);
+    detach_pid(pid);
+    kill(pid, SIGSTOP);
     hide_daemon(pid);
     return true;
 
@@ -282,6 +295,79 @@ static void new_zygote(int pid) {
 }
 
 #define DETACH_AND_CONT { detach_pid(pid); continue; }
+
+int wait_for_syscall(pid_t pid) {
+    int status;
+    while (1) {
+        ptrace(PTRACE_SYSCALL, pid, 0, 0);
+        int child = waitpid(pid, &status, 0);
+        if (child < 0)
+            return 1;
+        if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80)
+            return 0;
+        if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSEGV)
+            return 1; 
+        if (WIFEXITED(status))
+            return 1;
+    }
+}
+
+int read_syscall_num(int pid) {
+    int sys = -1;
+    char buf[1024];
+    sprintf(buf, "/proc/%d/syscall", pid);
+    FILE *fp = fopen(buf, "re");
+    if (fp) {
+        fscanf(fp, "%d", &sys);
+        fclose(fp);
+    }
+    return sys;
+}
+
+static std::string get_content(int pid, const char *file) {
+    char buf[1024];
+    sprintf(buf, "/proc/%d/%s", pid, file);
+    FILE *fp = fopen(buf, "re");
+    if (fp) {
+        fgets(buf, sizeof(buf), fp);
+        fclose(fp);
+        return std::string(buf);
+    }
+    return std::string("");
+}
+
+void do_check_fork() {
+    int pid = fork_pid;
+    fork_pid = 0;
+    if (pid <= 0)
+        return;
+    // wait until thread detach this pid
+    for (int i = 0; i < 10000 && ptrace(PTRACE_ATTACH, pid) < 0; i++)
+        usleep(100);
+    bool allow = false;
+    pid_list.emplace_back(pid);
+    waitpid(pid, 0, 0);
+    xptrace(PTRACE_SETOPTIONS, pid, nullptr, PTRACE_O_TRACESYSGOOD);
+    for (;;) {
+        if (wait_for_syscall(pid) != 0)
+            break;
+        if (read_syscall_num(pid) == __NR_prctl) {
+            if (!allow && (
+                 // app zygote
+                 strstr(get_content(pid, "attr/current").data(), "u:r:app_zygote:s0") ||
+                 // until pre-initialized
+                 get_content(pid, "cmdline") == "<pre-initialized>"))
+                 allow = true;
+            if (allow && check_pid(pid))
+                break;
+        }
+    }
+    // just in case
+    ptrace(PTRACE_DETACH, pid);
+    auto it = find(pid_list.begin(), pid_list.end(), pid);
+    if (it != pid_list.end())
+        pid_list.erase(it);
+}
 
 void proc_monitor() {
     monitor_thread = pthread_self();
@@ -369,19 +455,7 @@ void proc_monitor() {
                         DETACH_AND_CONT;
                 }
             } else {
-                switch (event) {
-                    case PTRACE_EVENT_CLONE:
-                        PTRACE_LOG("create new threads: [%lu]\n", msg);
-                        if (attaches[pid] && check_pid(pid))
-                            continue;
-                        break;
-                    case PTRACE_EVENT_EXEC:
-                    case PTRACE_EVENT_EXIT:
-                        PTRACE_LOG("exit or execve\n");
-                        [[fallthrough]];
-                    default:
-                        DETACH_AND_CONT;
-                }
+                DETACH_AND_CONT;
             }
             xptrace(PTRACE_CONT, pid);
         } else if (signal == SIGSTOP) {
@@ -391,10 +465,10 @@ void proc_monitor() {
             }
             if (attaches[pid]) {
                 // This is a process, continue monitoring
-                PTRACE_LOG("SIGSTOP from child\n");
-                xptrace(PTRACE_SETOPTIONS, pid, nullptr,
-                        PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT);
-                xptrace(PTRACE_CONT, pid);
+                attaches[pid] = false;
+                detach_pid(pid);
+                fork_pid = pid;
+                new_daemon_thread(&do_check_fork);
             } else {
                 // This is a thread, do NOT monitor
                 PTRACE_LOG("SIGSTOP from thread\n");
