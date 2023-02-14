@@ -50,8 +50,8 @@ public class DownloadActivity extends Activity {
 
     private static final String APP_NAME = "Magisk Delta";
     private static final String JSON_URL = BuildConfig.DEBUG ?
-            "https://huskydg.github.io/magisk-files/debug.json" :
-            "https://huskydg.github.io/magisk-files/canary.json";
+            "https://github.com" :
+            "https://github.com";
 
     private String apkLink = BuildConfig.APK_URL;
     private Context themed;
