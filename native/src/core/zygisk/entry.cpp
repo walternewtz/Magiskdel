@@ -77,6 +77,18 @@ int remote_request_sulist() {
     return -1;
 }
 
+int remote_request_umount() {
+    if (int fd = zygisk_request(ZygiskRequest::REVERT_UNMOUNT); fd >= 0) {
+        auto clean_ns = recv_fd(fd);
+        LOGD("denylist: set to clean ns %d\n", clean_ns);
+        if (clean_ns > 0) xsetns(clean_ns, CLONE_NEWNS);
+        close(clean_ns);
+        close(fd);
+        return 0;
+    }
+    return -1;
+}
+
 // The following code runs in magiskd
 
 static vector<int> get_module_fds(bool is_64_bit) {
@@ -106,6 +118,50 @@ static bool get_exe(int pid, char *buf, size_t sz) {
 static pthread_mutex_t zygiskd_lock = PTHREAD_MUTEX_INITIALIZER;
 static int zygiskd_sockets[] = { -1, -1 };
 #define zygiskd_socket zygiskd_sockets[is_64_bit]
+
+// mount namespace holder
+static int clean_nss[] = { -1, -1 };
+
+static int get_clean_ns(pid_t pid, const char *name) {
+    int pipe_fd[2];
+    pipe(pipe_fd);
+    int clean_ns = -1;
+    if (int child = xfork(); !child) {
+        switch_mnt_ns(pid);
+        xunshare(CLONE_NEWNS);
+        revert_unmount();
+        write_int(pipe_fd[1], 0);
+        read_int(pipe_fd[0]);
+        exit(0);
+    } else {
+        read_int(pipe_fd[0]);
+        char buf[PATH_MAX];
+        ssprintf(buf, PATH_MAX, "/proc/%d/ns/mnt", child);
+        clean_ns = open(buf, O_RDONLY);
+        write_int(pipe_fd[1], 0);
+        close(pipe_fd[0]);
+        close(pipe_fd[1]);
+    }
+    LOGD("denylist: clean ns fd=[%d] [%s]\n", clean_ns, name);
+    return clean_ns;
+}
+
+static int init_clean_ns(int pid) {
+    char buf[256];
+    get_exe(pid, buf, sizeof(buf));
+    if (str_ends(buf, "64")) {
+        if (clean_nss[0] < 0) {
+            LOGI("denylist: initialize the clean ns for app_process64\n");
+            clean_nss[0] = get_clean_ns(pid, "app_process64");
+        }
+        return clean_nss[0];
+    }
+    if (clean_nss[1] < 0) {
+        LOGI("denylist: initialize the clean ns for app_process32\n");
+        clean_nss[1] = get_clean_ns(pid, "app_process32");
+    }
+    return clean_nss[1];
+}
 
 static void connect_companion(int client, bool is_64_bit) {
     mutex_guard g(zygiskd_lock);
@@ -193,6 +249,11 @@ static void get_process_info(int client, const sock_cred *cred) {
     if (system_server_fd >= 0) close(system_server_fd);
     system_server_fd = xopen(("/proc/"s + to_string(cred->pid)).data(), O_PATH);
 
+    // reset mount namespace holder
+    close(clean_nss[0]);
+    close(clean_nss[1]);
+    clean_nss[0] = clean_nss[1] = -1;
+
     // Collect module status from system_server
     int slots = read_int(client);
     dynamic_bitset bits;
@@ -256,6 +317,9 @@ void zygisk_handler(int client, const sock_cred *cred) {
         break;
     case ZygiskRequest::SULIST_ROOT_NS:
         mount_magisk_to_remote(client, cred);
+        break;
+    case ZygiskRequest::REVERT_UNMOUNT:
+        send_fd(client, init_clean_ns(cred->pid));
         break;
     default:
         // Unknown code

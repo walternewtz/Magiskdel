@@ -242,4 +242,6 @@ void revert_unmount(int pid) {
             lazy_unmount(info.target.data());
         }
     }
+
+    xmount(nullptr, "/", nullptr, MS_SLAVE | MS_REC, nullptr);
 }
