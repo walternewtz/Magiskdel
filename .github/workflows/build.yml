@@ -33,6 +33,9 @@ jobs:
       - name: Setup environment
         uses: ./.github/actions/setup
 
+      - name: fix glibxx-3.4 error
+        uses: apt-get install libstdc++6
+
       - name: Build release
         run: ./build.py -vr all
 
