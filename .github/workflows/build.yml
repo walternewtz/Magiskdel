@@ -34,7 +34,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: fix glibxx-3.4 error
-        run: sudo apt-get install libstdc++6
+        run: sudo add-apt-repository ppa:ubuntu-toolchain-r/test && sudo apt-get update && sudo apt-get install --only-upgrade libstdc++6
 
       - name: Build release
         run: ./build.py -vr all
